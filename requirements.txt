@@ -1,0 +1,30 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-dotenv==1.0.1
+
+# Twilio
+twilio==9.4.1
+
+# HTTP client
+httpx==0.28.1
+
+# Google Cloud
+google-cloud-speech==2.31.0
+google-cloud-texttospeech==2.23.0
+
+# Audio
+pydub==0.25.1
+
+# DB
+sqlalchemy==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# Redis
+redis==5.2.1
+
+# Utils
+loguru==0.7.3

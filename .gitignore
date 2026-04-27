@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*-key.json
+gcp-key.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+data/postgres/
+data/redis/
+data/openclaw/
+*.db
+*.sqlite
+
+# Logs
+*.log
+logs/
+
+# ngrok
+ngrok.yml
+
+# Docker
+docker-compose.override.yml
