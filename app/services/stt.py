@@ -53,13 +53,17 @@ async def transcribe(audio: bytes, mime: str, *, prefer: Backend = "auto") -> tu
 
 async def _sarvam_stt(audio: bytes, mime: str) -> tuple[str, str]:
     """
-    Sarvam Speech-to-Text. Auto language detection across Indian languages + English.
-    Doc: https://docs.sarvam.ai/api-reference-docs/speech-to-text/transcribe
+    Sarvam Speech-to-Text using saaras:v3 (auto language detection across
+    Indian languages + English). REST endpoint accepts ≤30s audio per call;
+    longer clips need the batch API.
+    Doc: https://docs.sarvam.ai/api-reference-docs/speech-to-text/apis/rest-api
     """
     url = f"{settings.sarvam_base_url.rstrip('/')}/speech-to-text"
     suffix = _ext_for_mime(mime)
     files = {"file": (f"audio.{suffix}", audio, mime or "application/octet-stream")}
-    data = {"model": "saarika:v2.5", "language_code": "unknown"}
+    # mode=codemix handles natural Hindi/Telugu+English mixing; falls back to
+    # straight transcription when speech is monolingual.
+    data = {"model": "saaras:v3", "mode": "codemix"}
     headers = {"api-subscription-key": settings.sarvam_key}
 
     async with httpx.AsyncClient(timeout=60.0) as client:
