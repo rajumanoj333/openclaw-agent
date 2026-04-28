@@ -1,0 +1,146 @@
+"""
+OpenClaw subprocess wrapper.
+
+Run on the VM next to OpenClaw. Exposes a tiny HTTP API on 127.0.0.1:9000
+so the laptop's FastAPI gateway (over SSH tunnel) can submit a user message
+and get the agent's reply text back as JSON.
+
+Usage:
+    pip install fastapi uvicorn
+    python3 vm_agent_proxy.py
+
+Endpoints:
+    GET  /health                  -> {"status": "ok"}
+    POST /agent     body: {"message": "...", "agent": "main", "timeout": 90}
+                    -> {"reply": "...", "session_id": "...", "model": "...", "ms": 12345}
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+OPENCLAW_BIN = os.environ.get("OPENCLAW_BIN", "openclaw")
+DEFAULT_AGENT = os.environ.get("OPENCLAW_AGENT", "main")
+DEFAULT_TIMEOUT = int(os.environ.get("OPENCLAW_TIMEOUT", "120"))
+
+
+class AgentRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    agent: str = DEFAULT_AGENT
+    to: str | None = None
+    session_id: str | None = None
+    timeout: int = DEFAULT_TIMEOUT
+
+
+class AgentResponse(BaseModel):
+    reply: str
+    session_id: str | None = None
+    model: str | None = None
+    ms: int = 0
+    raw: dict | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+
+
+app = FastAPI(title="OpenClaw VM Proxy", lifespan=lifespan)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+def _build_args(req: AgentRequest) -> list[str]:
+    args = [OPENCLAW_BIN, "agent", "--json", "--timeout", str(req.timeout)]
+    if req.session_id:
+        args += ["--session-id", req.session_id]
+    elif req.to:
+        args += ["--to", req.to]
+    else:
+        args += ["--agent", req.agent]
+    args += ["--message", req.message]
+    return args
+
+
+def _extract_reply(stdout: str) -> tuple[str, dict | None]:
+    """OpenClaw mixes log lines with the JSON body. Find the {…} payload."""
+    start = stdout.find("{")
+    if start == -1:
+        return stdout.strip()[:2000], None
+    blob = stdout[start:]
+    try:
+        data = json.loads(blob)
+    except json.JSONDecodeError:
+        # find last balanced {...} block
+        depth = 0
+        last_end = -1
+        for i, ch in enumerate(blob):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    last_end = i + 1
+        if last_end == -1:
+            return stdout.strip()[:2000], None
+        try:
+            data = json.loads(blob[:last_end])
+        except json.JSONDecodeError:
+            return stdout.strip()[:2000], None
+
+    payloads = data.get("payloads") or []
+    if payloads and isinstance(payloads, list) and payloads[0].get("text"):
+        return payloads[0]["text"], data
+    meta = data.get("meta") or {}
+    if meta.get("finalAssistantVisibleText"):
+        return meta["finalAssistantVisibleText"], data
+    return json.dumps(data)[:2000], data
+
+
+@app.post("/agent", response_model=AgentResponse)
+async def run_agent(req: AgentRequest):
+    args = _build_args(req)
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(
+            proc.communicate(), timeout=req.timeout + 30
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise HTTPException(504, "openclaw subprocess timed out")
+
+    stdout = stdout_b.decode("utf-8", errors="replace")
+    stderr = stderr_b.decode("utf-8", errors="replace")
+
+    if proc.returncode != 0 and not stdout.strip():
+        raise HTTPException(502, f"openclaw exited {proc.returncode}: {stderr[:500]}")
+
+    reply, data = _extract_reply(stdout)
+    meta = (data or {}).get("meta") or {}
+    agent_meta = meta.get("agentMeta") or {}
+    return AgentResponse(
+        reply=reply,
+        session_id=agent_meta.get("sessionId"),
+        model=agent_meta.get("model"),
+        ms=int(meta.get("durationMs") or 0),
+        raw=None,
+    )
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=9000)
