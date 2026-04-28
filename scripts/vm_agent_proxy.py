@@ -133,18 +133,17 @@ async def run_agent(req: AgentRequest):
     stdout = stdout_b.decode("utf-8", errors="replace")
     stderr = stderr_b.decode("utf-8", errors="replace")
 
-    if proc.returncode != 0 and not stdout.strip():
-        raise HTTPException(
-            502, f"openclaw exited {proc.returncode}: stderr={stderr[:500]}"
-        )
-
+    # CLI writes JSON to stderr when falling back to embedded mode.
+    # Search both streams for the response payload.
     reply, data = _extract_reply(stdout)
     if not reply.strip():
-        # surface debug info instead of silently returning empty
+        reply, data = _extract_reply(stderr)
+
+    if not reply.strip():
         raise HTTPException(
             502,
             f"openclaw produced no extractable reply. "
-            f"rc={proc.returncode} stderr={stderr[:300]} stdout={stdout[:300]}",
+            f"rc={proc.returncode} stderr={stderr[:400]} stdout={stdout[:400]}",
         )
 
     meta = (data or {}).get("meta") or {}
