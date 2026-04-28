@@ -2,11 +2,12 @@ from fastapi import FastAPI
 from loguru import logger
 
 from app.config import settings
-from app.routes import audio, whatsapp
+from app.routes import audio, voice, whatsapp
 
 app = FastAPI(title="OpenClaw Twilio Agent", version="0.1.0")
 
 app.include_router(whatsapp.router)
+app.include_router(voice.router)
 app.include_router(audio.router)
 
 

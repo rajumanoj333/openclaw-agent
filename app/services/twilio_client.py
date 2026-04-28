@@ -43,3 +43,17 @@ def send_whatsapp_media(to: str, media_url: str, body: str | None = None) -> str
     msg = get_client().messages.create(**kwargs)
     logger.info(f"sent WhatsApp media to={to} sid={msg.sid} url={media_url}")
     return msg.sid
+
+
+def make_call(to: str, twiml_url: str) -> str:
+    """
+    Place an outbound voice call. Twilio will GET `twiml_url` to retrieve
+    the TwiML instructions for the call. Returns the call SID.
+    """
+    call = get_client().calls.create(
+        from_=settings.twilio_voice_from,
+        to=to,
+        url=twiml_url,
+    )
+    logger.info(f"made call to={to} sid={call.sid} url={twiml_url}")
+    return call.sid
