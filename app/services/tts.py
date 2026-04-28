@@ -69,14 +69,26 @@ async def _sarvam_tts(text: str, lang_code: str) -> tuple[bytes, str, str]:
     if not audios:
         raise RuntimeError(f"sarvam tts returned no audios: {data}")
 
-    # Concatenate base64-decoded WAV chunks. Each chunk is a self-contained
-    # WAV; for simplicity we just concatenate raw bytes — most players accept
-    # the first WAV's header and ignore trailing chunks. Good enough for short
-    # replies; for long replies we'd need a proper WAV concat.
     chunks = [base64.b64decode(a) for a in audios]
-    audio = chunks[0] if len(chunks) == 1 else _concat_wav(chunks)
-    logger.info(f"sarvam tts lang={lang_code} bytes={len(audio)} chunks={len(chunks)}")
-    return audio, "audio/wav", "wav"
+    wav = chunks[0] if len(chunks) == 1 else _concat_wav(chunks)
+
+    # WhatsApp rejects audio/wav. Convert to MP3 via pydub (needs ffmpeg).
+    mp3 = await asyncio.to_thread(_wav_to_mp3, wav)
+    logger.info(
+        f"sarvam tts lang={lang_code} wav={len(wav)} mp3={len(mp3)} chunks={len(chunks)}"
+    )
+    return mp3, "audio/mpeg", "mp3"
+
+
+def _wav_to_mp3(wav_bytes: bytes) -> bytes:
+    """Convert WAV bytes to MP3 bytes via pydub (requires ffmpeg in PATH)."""
+    from pydub import AudioSegment
+
+    seg = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+    out = io.BytesIO()
+    # WhatsApp audio bitrate ~64-96 kbps is plenty for speech
+    seg.export(out, format="mp3", bitrate="96k")
+    return out.getvalue()
 
 
 def _concat_wav(chunks: list[bytes]) -> bytes:
