@@ -29,9 +29,7 @@ gcp-key.json
 Thumbs.db
 
 # Data
-data/postgres/
-data/redis/
-data/openclaw/
+data/
 *.db
 *.sqlite
 
