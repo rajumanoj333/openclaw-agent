@@ -26,3 +26,20 @@ def send_whatsapp(to: str, body: str) -> str:
     )
     logger.info(f"sent WhatsApp to={to} sid={msg.sid}")
     return msg.sid
+
+
+def send_whatsapp_media(to: str, media_url: str, body: str | None = None) -> str:
+    """
+    Send a WhatsApp message with media attached. `media_url` must be a
+    publicly-fetchable HTTPS URL (Twilio downloads it server-side).
+    """
+    kwargs = {
+        "from_": settings.twilio_whatsapp_from,
+        "to": to,
+        "media_url": [media_url],
+    }
+    if body:
+        kwargs["body"] = body
+    msg = get_client().messages.create(**kwargs)
+    logger.info(f"sent WhatsApp media to={to} sid={msg.sid} url={media_url}")
+    return msg.sid

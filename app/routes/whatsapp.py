@@ -3,9 +3,12 @@ from loguru import logger
 
 from app.config import settings
 from app.lib.verify import verify_twilio_signature
+from app.services import audio_store
+from app.services.lang_detect import detect_lang
 from app.services.openclaw import ask_openclaw
 from app.services.stt import transcribe
-from app.services.twilio_client import send_whatsapp
+from app.services.tts import synthesize
+from app.services.twilio_client import send_whatsapp, send_whatsapp_media
 from app.services.twilio_media import download_media
 
 router = APIRouter(prefix="/twilio", tags=["twilio"])
@@ -23,17 +26,41 @@ def _twiml(text: str | None = None) -> Response:
     return Response(content=body, media_type="application/xml")
 
 
-async def _process_text(from_: str, text: str) -> None:
+def _public_audio_url(name: str) -> str:
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/audio/{name}"
+
+
+async def _send_reply(to: str, text: str, *, with_audio: bool, lang: str) -> None:
+    """Always sends text. If `with_audio`, also sends a TTS audio version."""
+    try:
+        send_whatsapp(to, text[:1500])
+    except Exception:
+        logger.exception("twilio text send failed")
+
+    if not with_audio:
+        return
+
+    try:
+        audio, _, ext = await synthesize(text[:1200], lang)
+        name = audio_store.save(audio, ext)
+        media_url = _public_audio_url(name)
+        send_whatsapp_media(to, media_url)
+    except Exception:
+        logger.exception("tts/audio send failed")
+
+
+async def _process_text(from_: str, text: str, *, with_audio: bool = False,
+                        lang: str = "en-IN") -> None:
     e164 = from_.removeprefix("whatsapp:") if from_.startswith("whatsapp:") else from_
     try:
         reply = await ask_openclaw(text, to=e164, timeout=120)
     except Exception as e:
         logger.exception("openclaw call failed")
         reply = f"Agent error: {e}"
-    try:
-        send_whatsapp(from_, reply[:1500])
-    except Exception:
-        logger.exception("twilio send failed")
+
+    reply_lang = detect_lang(reply, hint=lang)
+    await _send_reply(from_, reply, with_audio=with_audio, lang=reply_lang)
 
 
 async def _process_voice_note(from_: str, media_url: str, mime: str) -> None:
@@ -46,7 +73,7 @@ async def _process_voice_note(from_: str, media_url: str, mime: str) -> None:
 
     actual_mime = content_type or mime or "audio/ogg"
     try:
-        text, lang = await transcribe(audio, actual_mime)
+        text, raw_lang = await transcribe(audio, actual_mime)
     except Exception as e:
         logger.exception("stt failed")
         send_whatsapp(from_, f"Could not transcribe your audio: {e}")
@@ -56,9 +83,10 @@ async def _process_voice_note(from_: str, media_url: str, mime: str) -> None:
         send_whatsapp(from_, "I couldn't make out the audio. Please try again or send text.")
         return
 
-    logger.info(f"voice transcript lang={lang} text={text!r}")
+    lang = detect_lang(text, hint=raw_lang)
+    logger.info(f"voice transcript lang={lang} (raw={raw_lang}) text={text!r}")
     send_whatsapp(from_, f"🎙️ I heard: \"{text}\" ({lang})\nWorking on it…")
-    await _process_text(from_, text)
+    await _process_text(from_, text, with_audio=True, lang=lang)
 
 
 @router.post("/whatsapp")
