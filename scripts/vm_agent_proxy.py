@@ -108,10 +108,18 @@ def _extract_reply(stdout: str) -> tuple[str, dict | None]:
 @app.post("/agent", response_model=AgentResponse)
 async def run_agent(req: AgentRequest):
     args = _build_args(req)
+    env = os.environ.copy()
+    # Ensure npm-global bin (where `openclaw` lives) is on PATH for non-login subprocs
+    home = env.get("HOME", "/home/manoj")
+    extra = f"{home}/.npm-global/bin"
+    if extra not in env.get("PATH", ""):
+        env["PATH"] = f"{extra}:{env.get('PATH', '')}"
+
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     try:
         stdout_b, stderr_b = await asyncio.wait_for(
@@ -126,9 +134,19 @@ async def run_agent(req: AgentRequest):
     stderr = stderr_b.decode("utf-8", errors="replace")
 
     if proc.returncode != 0 and not stdout.strip():
-        raise HTTPException(502, f"openclaw exited {proc.returncode}: {stderr[:500]}")
+        raise HTTPException(
+            502, f"openclaw exited {proc.returncode}: stderr={stderr[:500]}"
+        )
 
     reply, data = _extract_reply(stdout)
+    if not reply.strip():
+        # surface debug info instead of silently returning empty
+        raise HTTPException(
+            502,
+            f"openclaw produced no extractable reply. "
+            f"rc={proc.returncode} stderr={stderr[:300]} stdout={stdout[:300]}",
+        )
+
     meta = (data or {}).get("meta") or {}
     agent_meta = meta.get("agentMeta") or {}
     return AgentResponse(
