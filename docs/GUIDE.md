@@ -41,7 +41,7 @@ Three ways to talk to it:
 │     Bot: text reply + 🔊 spoken reply                    │
 │                                                           │
 │  3. Phone call                                           │
-│     You dial +1 (947) 837-8039                           │
+│     You dial +1 (947) 837-803X                           │
 │     Bot: "Hello, this is Morpheus. What can I do?"       │
 │     You speak → bot hangs up → you get WhatsApp confirm  │
 │     30s later bot calls you back with the spoken answer  │
@@ -266,7 +266,7 @@ Open `.env` in Notepad and fill in real values. The fields that matter:
 ```
 TWILIO_ACCOUNT_SID=...        # from console.twilio.com
 TWILIO_AUTH_TOKEN=...         # from console.twilio.com
-TWILIO_WHATSAPP_FROM=whatsapp:+14155238886    # sandbox default
+TWILIO_WHATSAPP_FROM=whatsapp:+1415523888X    # sandbox default
 TWILIO_VOICE_FROM=+1XXXXXXXXXX                 # your Twilio voice number
 WHATSAPP_NOTIFY_TO=whatsapp:+91XXXXXXXXXX     # the phone joined to sandbox
 
