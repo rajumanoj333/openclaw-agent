@@ -33,10 +33,10 @@ _DEFAULT_SARVAM_SPEAKER = "anushka"
 # so we use MP3 for Google and OGG/WAV for Sarvam — adjust if WhatsApp rejects.
 
 
-async def synthesize(text: str, lang_code: str) -> tuple[bytes, str, str]:
+async def synthesize(text: str, lang_code: str) -> tuple[bytes, str, str, str]:
     """
-    Returns (audio_bytes, mime_type, file_extension). Picks Sarvam for Indic
-    languages, Google otherwise.
+    Returns (audio_bytes, mime_type, file_extension, backend_name).
+    Picks Sarvam for Indic languages, Google otherwise.
     """
     text = (text or "").strip()
     if not text:
@@ -44,11 +44,13 @@ async def synthesize(text: str, lang_code: str) -> tuple[bytes, str, str]:
 
     if lang_code in _SARVAM_LANGS and settings.sarvam_key:
         try:
-            return await _sarvam_tts(text, lang_code)
+            audio, mime, ext = await _sarvam_tts(text, lang_code)
+            return audio, mime, ext, "sarvam"
         except Exception as e:
             logger.warning(f"sarvam tts failed lang={lang_code}: {e!r}; trying google")
 
-    return await _google_tts(text, lang_code)
+    audio, mime, ext = await _google_tts(text, lang_code)
+    return audio, mime, ext, "google"
 
 
 async def _sarvam_tts(text: str, lang_code: str) -> tuple[bytes, str, str]:

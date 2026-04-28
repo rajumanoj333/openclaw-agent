@@ -42,10 +42,10 @@ async def _send_reply(to: str, text: str, *, with_audio: bool, lang: str) -> Non
         return
 
     try:
-        audio, _, ext = await synthesize(text[:1200], lang)
+        audio, _, ext, backend = await synthesize(text[:1200], lang)
         name = audio_store.save(audio, ext)
         media_url = _public_audio_url(name)
-        send_whatsapp_media(to, media_url)
+        send_whatsapp_media(to, media_url, body=f"🔊 voice: {backend} ({lang})")
     except Exception:
         logger.exception("tts/audio send failed")
 
