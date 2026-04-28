@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     sarvam_api_key: str = ""
     sarvam_base_url: str = "https://api.sarvam.ai"
 
+    @property
+    def sarvam_key(self) -> str:
+        return self.sarvam_api_key.strip()
+
     postgres_user: str = "agent"
     postgres_password: str = ""
     postgres_db: str = "agentdb"

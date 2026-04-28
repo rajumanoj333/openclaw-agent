@@ -4,7 +4,9 @@ from loguru import logger
 from app.config import settings
 from app.lib.verify import verify_twilio_signature
 from app.services.openclaw import ask_openclaw
+from app.services.stt import transcribe
 from app.services.twilio_client import send_whatsapp
+from app.services.twilio_media import download_media
 
 router = APIRouter(prefix="/twilio", tags=["twilio"])
 
@@ -13,7 +15,6 @@ def _twiml(text: str | None = None) -> Response:
     if text is None:
         body = '<?xml version="1.0" encoding="UTF-8"?><Response/>'
     else:
-        # Escape XML-special chars cheaply
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         body = (
             '<?xml version="1.0" encoding="UTF-8"?>'
@@ -22,18 +23,42 @@ def _twiml(text: str | None = None) -> Response:
     return Response(content=body, media_type="application/xml")
 
 
-async def _process_and_reply(from_: str, text: str) -> None:
+async def _process_text(from_: str, text: str) -> None:
     e164 = from_.removeprefix("whatsapp:") if from_.startswith("whatsapp:") else from_
     try:
         reply = await ask_openclaw(text, to=e164, timeout=120)
     except Exception as e:
         logger.exception("openclaw call failed")
         reply = f"Agent error: {e}"
-
     try:
         send_whatsapp(from_, reply[:1500])
     except Exception:
         logger.exception("twilio send failed")
+
+
+async def _process_voice_note(from_: str, media_url: str, mime: str) -> None:
+    try:
+        audio, content_type = await download_media(media_url)
+    except Exception as e:
+        logger.exception("media download failed")
+        send_whatsapp(from_, f"Could not fetch your audio: {e}")
+        return
+
+    actual_mime = content_type or mime or "audio/ogg"
+    try:
+        text, lang = await transcribe(audio, actual_mime)
+    except Exception as e:
+        logger.exception("stt failed")
+        send_whatsapp(from_, f"Could not transcribe your audio: {e}")
+        return
+
+    if not text.strip():
+        send_whatsapp(from_, "I couldn't make out the audio. Please try again or send text.")
+        return
+
+    logger.info(f"voice transcript lang={lang} text={text!r}")
+    send_whatsapp(from_, f"🎙️ I heard: \"{text}\" ({lang})\nWorking on it…")
+    await _process_text(from_, text)
 
 
 @router.post("/whatsapp")
@@ -54,12 +79,15 @@ async def whatsapp_webhook(request: Request, background: BackgroundTasks):
     logger.info(f"WA in from={from_} media={num_media} body={body!r}")
 
     if num_media > 0:
-        return _twiml("Got media. Voice handling coming next.")
+        media_url = form.get("MediaUrl0", "")
+        mime = form.get("MediaContentType0", "")
+        if mime.startswith("audio/") or mime.startswith("video/"):
+            background.add_task(_process_voice_note, from_, media_url, mime)
+            return _twiml("Got your voice note. Transcribing…")
+        return _twiml(f"Got media ({mime}). Only voice notes supported for now.")
 
     if not body.strip():
         return _twiml("Send me a message and I will get on it.")
 
-    # Twilio webhook must reply within 15s. OpenClaw can take ~20s.
-    # Ack immediately and push the real answer via REST.
-    background.add_task(_process_and_reply, from_, body)
+    background.add_task(_process_text, from_, body)
     return _twiml("Working on it…")
