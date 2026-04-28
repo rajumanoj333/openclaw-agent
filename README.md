@@ -1,54 +1,57 @@
 # OpenClaw Twilio Agent
 
-WhatsApp + voice agent. Twilio webhook → FastAPI → OpenClaw → reply.
+WhatsApp + voice-call agent. Send a message or call a number, the OpenClaw AI agent (Azure GPT-5.1-chat) does the work, replies back through the same channel. English plus Indian languages (Telugu, Hindi, etc.).
 
-## Stack
+## Read these first
 
-- FastAPI (Python 3.12)
-- Twilio (WhatsApp + Voice)
-- OpenClaw (LLM agent runtime, Azure AI Foundry backend)
-- Google Cloud Speech (STT/TTS — English)
-- Sarvam AI (STT/TTS — Indic languages)
-- Postgres + Redis (Docker)
+- **[`docs/GUIDE.md`](docs/GUIDE.md)** — the complete handbook (architecture, components, setup, code walkthrough, troubleshooting, FAQ). For first-time readers and non-technical reviewers.
+- **[`docs/STARTUP.md`](docs/STARTUP.md)** — copy-paste daily startup commands. For when you just want to start working.
 
-## Local dev
+## What you can do today
 
-```bash
-# 1. clone
-git clone https://github.com/rajumanoj333/openclaw-agent.git
-cd openclaw-agent
+| Channel | Direction | Status |
+|---------|-----------|--------|
+| WhatsApp text | in/out | working |
+| WhatsApp voice note (English + Telugu/Hindi/etc.) | in/out | working |
+| Phone call (inbound greet → record → callback with TTS reply) | in/out | working |
 
-# 2. venv
-py -3.12 -m venv venv
-venv\Scripts\activate   # Windows
-pip install -r requirements.txt
-
-# 3. env
-copy .env.example .env
-# edit .env with real values (never commit)
-
-# 4. run
-uvicorn app.main:app --reload --port 8080
-
-# 5. tunnel for Twilio webhook
-ngrok http 8080
-# paste https URL into Twilio sandbox webhook
-```
-
-## Health check
+## Stack at a glance
 
 ```
-curl http://localhost:8080/health
+Twilio  ──▶  ngrok  ──▶  FastAPI (laptop)  ──▶  SSH tunnel  ──▶  vm_agent_proxy
+                                                                       │
+                                                                       ▼
+                                                              openclaw agent CLI
+                                                                       │
+                                                                       ▼
+                                                            OpenClaw gateway WS
+                                                                       │
+                                                                       ▼
+                                                          Azure AI Foundry (gpt-5.1)
 ```
+
+- **STT (Indic + English):** Sarvam saaras-v3, fallback Google Cloud Speech
+- **TTS (Indic):** Sarvam, **(English):** Google Cloud TTS
+- **Storage:** Postgres + Redis (Docker, localhost-only)
+- **Tunnel:** ngrok (dev), SSH `-L` for VM access
 
 ## Project layout
 
 ```
-app/
-├── main.py          # FastAPI entry
-├── config.py        # env settings
-├── routes/          # /twilio/whatsapp, /twilio/voice
-├── services/        # twilio, openclaw, stt, tts, db
-├── lib/             # signature verify, helpers
-└── models/          # SQLAlchemy models
+app/                 FastAPI app (routes + services)
+scripts/             vm_agent_proxy.py (runs on Azure VM)
+docs/                GUIDE.md, STARTUP.md
+data/                Postgres/Redis volumes + audio cache (gitignored)
+secrets/             GCP key (gitignored)
 ```
+
+## Quick health check
+
+```powershell
+curl.exe -s http://127.0.0.1:9000/health    # SSH tunnel + VM proxy
+curl.exe -s http://127.0.0.1:8080/health    # FastAPI
+```
+
+Both must return `{"status":"ok"}`.
+
+For everything else, open [`docs/GUIDE.md`](docs/GUIDE.md).
