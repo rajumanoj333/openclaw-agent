@@ -131,7 +131,9 @@ async def _process_voice_call(caller: str, recording_url: str) -> None:
     6. Outbound call back to caller; TwiML plays the audio.
     7. Send WhatsApp text reply.
     """
-    wa_to = caller if caller.startswith("whatsapp:") else f"whatsapp:{caller}"
+    wa_to = settings.whatsapp_notify_to.strip() or (
+        caller if caller.startswith("whatsapp:") else f"whatsapp:{caller}"
+    )
 
     # Twilio recording requires `.mp3` suffix to fetch as MP3 instead of WAV
     audio_url = recording_url + ".mp3"

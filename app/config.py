@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_whatsapp_from: str = "whatsapp:+14155238886"
     twilio_voice_from: str = ""
+    # If set, voice-call status updates go here regardless of who called.
+    # Useful in dev when the WhatsApp sandbox number != the test phone number.
+    whatsapp_notify_to: str = ""
 
     openclaw_url: str = "http://localhost:18789"
     openclaw_token: str = ""
