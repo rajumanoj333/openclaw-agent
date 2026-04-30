@@ -19,7 +19,7 @@ For the full theory, see [`GUIDE.md`](GUIDE.md).
 ## Window 1 — SSH tunnel to the VM
 
 ```powershell
-ssh -L 127.0.0.1:9000:127.0.0.1:9000 -o ServerAliveInterval=10 manoj@74.225.254.197 -N
+ssh -L 127.0.0.1:9000:127.0.0.1:9000 -o ServerAliveInterval=10 manoj@74.225.254.19X -N
 ```
 
 After typing the password, the window goes silent. **That is success.** Don't close it.
@@ -82,7 +82,7 @@ curl.exe -s http://127.0.0.1:9000/health
 curl.exe -s http://127.0.0.1:8080/health
 
 # ngrok (replace with your URL)
-curl.exe -s "https://radia-henotheistic-unvividly.ngrok-free.dev/health"
+curl.exe -s "https://radia-henotheistic-xxxxxxxx.ngrok-free.dev/health"
 ```
 
 All three should return `{"status":"ok"}`. If any is wrong, jump to the [troubleshooting](GUIDE.md#12-troubleshooting-cookbook) section.
@@ -114,7 +114,7 @@ uvicorn `--reload` watches `.py` files. Save → restart is automatic. Watch Win
 ### Want to test agent directly without WhatsApp
 
 ```powershell
-$payload = @{ message = "What is 5+7?"; to = "+916304530240"; timeout = 60 } | ConvertTo-Json
+$payload = @{ message = "What is 5+7?"; to = "+91xxxxxxxxx"; timeout = 60 } | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:9000/agent -ContentType "application/json" -Body $payload -TimeoutSec 90
 ```
 
