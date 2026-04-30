@@ -3,6 +3,7 @@ from loguru import logger
 
 from app.config import settings
 from app.routes import audio, voice, whatsapp
+from app.services import voice_prompts
 
 app = FastAPI(title="OpenClaw Twilio Agent", version="0.1.0")
 
@@ -24,3 +25,7 @@ async def health():
 @app.on_event("startup")
 async def startup_event():
     logger.info(f"App starting in {settings.app_env} mode on port {settings.app_port}")
+    try:
+        await voice_prompts.ensure_all()
+    except Exception:
+        logger.exception("voice prompts ensure_all failed; voice calls may use fallback")

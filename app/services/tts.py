@@ -23,10 +23,12 @@ from app.config import settings
 Backend = Literal["sarvam", "google"]
 
 _SARVAM_LANGS = {
+    "en-IN",
     "hi-IN", "te-IN", "ta-IN", "kn-IN", "ml-IN",
     "bn-IN", "gu-IN", "pa-IN", "or-IN", "mr-IN",
 }
 _DEFAULT_SARVAM_SPEAKER = "anushka"
+_DEFAULT_SARVAM_MODEL = "bulbul:v2"
 
 # WhatsApp accepts: audio/aac, audio/mp4, audio/amr, audio/mpeg, audio/ogg.
 # Both Sarvam (WAV) and Google (MP3) outputs are not all directly accepted,
@@ -60,6 +62,12 @@ async def _sarvam_tts(text: str, lang_code: str) -> tuple[bytes, str, str]:
         "text": text[:1500],
         "target_language_code": lang_code,
         "speaker": _DEFAULT_SARVAM_SPEAKER,
+        "model": _DEFAULT_SARVAM_MODEL,
+        "pace": 1,
+        "pitch": 0,
+        "loudness": 1,
+        "speech_sample_rate": 22050,
+        "enable_preprocessing": True,
     }
 
     async with httpx.AsyncClient(timeout=60.0) as client:

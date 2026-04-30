@@ -1,24 +1,23 @@
 """
-Twilio voice call routes — Flow A (async callback).
+Twilio voice call routes — bilingual Flow A.
 
-Inbound flow:
-    Caller → /twilio/voice          (greet + start record)
-    Recording done → /twilio/voice/recorded
-    Background: STT → WhatsApp confirm → OpenClaw → outbound callback
+Flow:
+    POST /twilio/voice                  greet + gather digit (1=en, 2=te)
+    POST /twilio/voice/lang             read digit, play prompt, start record
+    POST /twilio/voice/recorded         after caller stops; ack + bg process
+    GET  /twilio/voice/say/{call_id}    TwiML served on outbound callback
 
-Outbound flow:
-    /twilio/voice/say/{call_id}     served when Twilio dials user back;
-                                    plays the cached reply audio + hangs up.
+Every spoken line uses Sarvam-generated MP3s served from /audio/static/.
 """
 from __future__ import annotations
 
 import secrets
 
-from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Form, Request, Response
 from loguru import logger
 
 from app.config import settings
-from app.services import audio_store, voice_session
+from app.services import audio_store, voice_prompts, voice_session
 from app.services.lang_detect import detect_lang
 from app.services.openclaw import ask_openclaw
 from app.services.stt import transcribe
@@ -28,9 +27,10 @@ from app.services.twilio_media import download_media
 
 router = APIRouter(prefix="/twilio/voice", tags=["twilio-voice"])
 
-GREETING = "Hello, this is Morpheus. What can I do for you? Please speak after the beep, then stay silent."
-RECORD_FOOTER = "Thanks. I will work on it and call you back when it is done."
-GOODBYE = "Sorry, I didn't catch that. Goodbye."
+LANG_BY_DIGIT = {"1": "en-IN", "2": "te-IN"}
+PROMPT_BY_LANG = {"en-IN": "prompt_en", "te-IN": "prompt_te"}
+FOOTER_BY_LANG = {"en-IN": "footer_en", "te-IN": "footer_te"}
+GOODBYE_BY_LANG = {"en-IN": "goodbye_en", "te-IN": "goodbye_te"}
 
 
 def _twiml(xml_body: str) -> Response:
@@ -44,11 +44,15 @@ def _public_url(path: str) -> str:
     return f"{settings.public_base_url.rstrip('/')}{path}"
 
 
+def _play(prompt_name: str) -> str:
+    return f"<Play>{voice_prompts.url_for(prompt_name)}</Play>"
+
+
 @router.post("")
 async def voice_inbound(request: Request):
     """
     Twilio hits this when someone dials the voice number.
-    Greets the caller and begins a 60s recording.
+    Plays the bilingual greeting and gathers a single DTMF digit.
     """
     form = dict(await request.form())
     logger.info(
@@ -56,14 +60,52 @@ async def voice_inbound(request: Request):
         f"sid={form.get('CallSid')}"
     )
 
-    # action URL is where Twilio POSTs the recording metadata when done.
-    action = _public_url("/twilio/voice/recorded")
+    action = _public_url("/twilio/voice/lang")
     body = (
-        f'<Say voice="alice">{GREETING}</Say>'
-        f'<Record action="{action}" method="POST" '
-        f'maxLength="60" timeout="3" playBeep="true" trim="trim-silence" '
-        f'finishOnKey="#" />'
-        f'<Say voice="alice">{GOODBYE}</Say>'
+        f'<Gather numDigits="1" timeout="6" method="POST" action="{action}">'
+        f"{_play('greeting')}"
+        f"</Gather>"
+        # If no digit pressed, replay greeting once then hang up.
+        f"{_play('no_selection')}"
+        f"<Hangup/>"
+    )
+    return _twiml(body)
+
+
+@router.post("/lang")
+async def voice_lang(
+    request: Request,
+    Digits: str = Form(""),
+    From: str = Form(""),
+    CallSid: str = Form(""),
+):
+    """
+    Twilio POSTs the digit the caller pressed. Pick language and start
+    recording with the language-appropriate prompt.
+    """
+    lang = LANG_BY_DIGIT.get(Digits.strip())
+    logger.info(f"voice lang from={From} sid={CallSid} digit={Digits!r} lang={lang}")
+
+    if lang is None:
+        # Unrecognized digit — replay greeting + gather once more
+        action = _public_url("/twilio/voice/lang")
+        body = (
+            f"{_play('no_selection')}"
+            f'<Gather numDigits="1" timeout="6" method="POST" action="{action}">'
+            f"{_play('greeting')}"
+            f"</Gather>"
+            f"<Hangup/>"
+        )
+        return _twiml(body)
+
+    record_action = _public_url(f"/twilio/voice/recorded?lang={lang}")
+    body = (
+        f"{_play(PROMPT_BY_LANG[lang])}"
+        f'<Record action="{record_action}" method="POST" '
+        f'maxLength="60" timeout="3" playBeep="true" '
+        f'trim="trim-silence" finishOnKey="#" />'
+        f"{_play(GOODBYE_BY_LANG[lang])}"
+        f"<Hangup/>"
     )
     return _twiml(body)
 
@@ -73,69 +115,69 @@ async def voice_recorded(
     request: Request,
     background: BackgroundTasks,
     From: str = Form(""),
-    To: str = Form(""),
     CallSid: str = Form(""),
     RecordingUrl: str = Form(""),
-    RecordingSid: str = Form(""),
     RecordingDuration: str = Form("0"),
 ):
     """
-    Twilio POSTs here after the caller stops recording. We acknowledge with
-    a short TwiML, then hang up and process the recording in the background.
+    Twilio POSTs after the caller stops recording. Ack with the localized
+    "I'll call back" footer, hang up, and process in the background.
     """
+    lang = request.query_params.get("lang", "en-IN")
     logger.info(
-        f"voice recorded from={From} sid={CallSid} duration={RecordingDuration}s "
-        f"url={RecordingUrl}"
+        f"voice recorded from={From} sid={CallSid} lang={lang} "
+        f"duration={RecordingDuration}s url={RecordingUrl}"
     )
 
     if not RecordingUrl:
-        return _twiml(f'<Say voice="alice">{GOODBYE}</Say><Hangup/>')
+        body = f"{_play(GOODBYE_BY_LANG.get(lang, 'goodbye_en'))}<Hangup/>"
+        return _twiml(body)
 
     background.add_task(
         _process_voice_call,
         caller=From,
         recording_url=RecordingUrl,
+        lang=lang,
     )
 
-    body = f'<Say voice="alice">{RECORD_FOOTER}</Say><Hangup/>'
+    footer = FOOTER_BY_LANG.get(lang, "footer_en")
+    body = f"{_play(footer)}<Hangup/>"
     return _twiml(body)
 
 
 @router.api_route("/say/{call_id}", methods=["GET", "POST"])
 async def voice_say(call_id: str):
-    """
-    TwiML served when Twilio dials the user back. Plays the cached reply.
-    """
+    """TwiML served when Twilio dials the user back. Plays the cached reply."""
     item = voice_session.get(call_id)
     if not item:
-        body = '<Say voice="alice">No reply cached. Goodbye.</Say><Hangup/>'
+        body = f"{_play('goodbye_en')}<Hangup/>"
         return _twiml(body)
 
     if item.audio_name:
         audio_url = _public_url(f"/audio/{item.audio_name}")
-        body = f'<Play>{audio_url}</Play><Hangup/>'
+        body = f"<Play>{audio_url}</Play><Hangup/>"
     else:
-        # fallback to Twilio TTS if our TTS failed earlier
+        # If TTS failed earlier we have only text. Better to still try
+        # synthesizing a short fallback than use Twilio's robotic voice.
         safe = item.fallback_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         body = f'<Say voice="alice">{safe[:1500]}</Say><Hangup/>'
     return _twiml(body)
 
 
-async def _process_voice_call(caller: str, recording_url: str) -> None:
+async def _process_voice_call(caller: str, recording_url: str, lang: str) -> None:
     """
-    1. Download recording (Twilio adds .mp3 to the URL).
-    2. STT transcribe.
+    1. Download recording.
+    2. STT (lang hint from caller's selection).
     3. WhatsApp confirmation.
     4. Send to OpenClaw.
-    5. Generate TTS audio of reply.
-    6. Outbound call back to caller; TwiML plays the audio.
+    5. Generate TTS audio of reply in the same language.
+    6. Outbound call back; TwiML plays the audio.
     7. Send WhatsApp text reply.
     """
     wa_to = settings.whatsapp_notify_to.strip() or (
         caller if caller.startswith("whatsapp:") else f"whatsapp:{caller}"
     )
 
-    # Twilio recording requires `.mp3` suffix to fetch as MP3 instead of WAV
     audio_url = recording_url + ".mp3"
     try:
         audio_bytes, content_type = await download_media(audio_url)
@@ -164,36 +206,38 @@ async def _process_voice_call(caller: str, recording_url: str) -> None:
             pass
         return
 
-    lang = detect_lang(transcript, hint=raw_lang)
-    logger.info(f"voice call transcript lang={lang} text={transcript!r}")
+    # Caller chose the language; honor that even if the transcript scripts
+    # leak through (e.g. someone says English numbers in a Telugu sentence).
+    final_lang = lang or detect_lang(transcript, hint=raw_lang)
+    logger.info(
+        f"voice call transcript caller_lang={lang} stt_lang={raw_lang} "
+        f"final={final_lang} text={transcript!r}"
+    )
 
     try:
         send_whatsapp(
             wa_to,
-            f"📞 Got your call. I heard: \"{transcript}\" ({lang})\nWorking on it…",
+            f"📞 Got your call. I heard: \"{transcript}\" ({final_lang})\nWorking on it…",
         )
     except Exception:
         logger.exception("twilio WA confirm send failed")
 
-    # Run task via OpenClaw — keyed off caller phone for session memory
     try:
         reply = await ask_openclaw(transcript, to=caller, timeout=180)
     except Exception as e:
         logger.exception("openclaw call failed")
         reply = f"I ran into an error: {e}"
 
-    reply_lang = detect_lang(reply, hint=lang)
-
-    # Generate TTS of the reply
     audio_name: str | None = None
     try:
-        audio, _, ext, backend = await synthesize(reply[:1200], reply_lang)
+        audio, _, ext, backend = await synthesize(reply[:1200], final_lang)
         audio_name = audio_store.save(audio, ext)
-        logger.info(f"voice reply tts backend={backend} lang={reply_lang} file={audio_name}")
+        logger.info(
+            f"voice reply tts backend={backend} lang={final_lang} file={audio_name}"
+        )
     except Exception:
-        logger.exception("voice reply TTS failed; will fall back to Twilio Say")
+        logger.exception("voice reply TTS failed; falling back to <Say>")
 
-    # Cache reply for the TwiML URL Twilio will fetch on outbound call
     call_id = secrets.token_urlsafe(12)
     voice_session.put(call_id, audio_name, reply)
 
@@ -203,7 +247,6 @@ async def _process_voice_call(caller: str, recording_url: str) -> None:
     except Exception:
         logger.exception("outbound call failed")
 
-    # Always send WhatsApp text version as well
     try:
         send_whatsapp(wa_to, f"📞 Result:\n{reply[:1400]}")
     except Exception:
