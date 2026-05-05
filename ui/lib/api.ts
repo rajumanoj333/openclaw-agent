@@ -46,6 +46,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      // ngrok free tier shows an interstitial HTML page on first request.
+      // Sending any value for this header bypasses it.
+      "ngrok-skip-browser-warning": "1",
       ...authHeaders(),
       ...(init?.headers || {}),
     },

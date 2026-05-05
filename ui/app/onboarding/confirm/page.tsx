@@ -20,7 +20,14 @@ export default function ConfirmProfilePage() {
     api
       .getProfile()
       .then((p) => setProfile(p))
-      .catch(() => router.replace("/onboarding/business"));
+      .catch((e) => {
+        const msg = String(e);
+        if (msg.includes("404") || msg.includes("no profile")) {
+          router.replace("/onboarding/business");
+        } else {
+          setErr(msg);
+        }
+      });
   }, [router]);
 
   const update = (k: string, v: string) =>
