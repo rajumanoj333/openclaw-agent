@@ -19,7 +19,20 @@ export default function ConfirmProfilePage() {
   useEffect(() => {
     api
       .getProfile()
-      .then((p) => setProfile(p))
+      .then((p) => {
+        // Fallback: if LLM extraction returned null name, derive from the
+        // website hostname so the user has a sensible starting value.
+        if (!p.name && p.website) {
+          try {
+            const host = new URL(p.website).hostname.replace(/^www\./, "");
+            const guess = host.split(".")[0];
+            p.name = guess.charAt(0).toUpperCase() + guess.slice(1);
+          } catch {
+            /* ignore */
+          }
+        }
+        setProfile(p);
+      })
       .catch((e) => {
         const msg = String(e);
         if (msg.includes("404") || msg.includes("no profile")) {
@@ -91,9 +104,15 @@ export default function ConfirmProfilePage() {
     <div className="bg-panel border border-border rounded-2xl p-8">
       <StepIndicator active={1} />
       <h1 className="text-2xl font-semibold mb-1">Does this look right?</h1>
-      <p className="text-sm text-white/60 mb-5">
+      <p className="text-sm text-text-dim mb-5">
         Edit anything that's wrong. The agent will use exactly these details.
       </p>
+      {(!profile.name || !profile.description || profile.services.length === 0) && (
+        <div className="text-xs text-warn bg-warn/10 border border-warn/30 rounded-lg p-3 mb-4">
+          Some fields couldn't be auto-extracted (this site is JS-heavy or sparse on text).
+          Please fill in the missing details manually below — name, description, services, etc.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Field label="Business name" value={value("name")} onChange={(v) => update("name", v)} />

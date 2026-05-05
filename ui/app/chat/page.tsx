@@ -74,7 +74,22 @@ export default function ChatPage() {
 
   if (!phone) return null;
 
-  const onSend = (body: string) => sockRef.current?.send(body);
+  const onSend = (body: string) => {
+    // Optimistically paint the user's outgoing UI message so they see it
+    // immediately without waiting for a server roundtrip / broadcast.
+    setEvents((cur) => [
+      ...cur,
+      {
+        phone: phone!,
+        channel: "ui",
+        direction: "in",
+        body,
+        kind: "message",
+        ts: Date.now() / 1000,
+      } as ChatEvent,
+    ]);
+    sockRef.current?.send(body);
+  };
 
   const logout = () => {
     sockRef.current?.close();

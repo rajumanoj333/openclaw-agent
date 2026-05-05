@@ -67,8 +67,9 @@ async def _handle_inbound(phone: str, raw: str) -> None:
     if not body:
         return
 
-    # Echo the user's UI message immediately so they see it in their own thread.
-    ws_hub.fire(phone, channel="ui", direction="in", body=body)
+    # NOTE: do NOT echo this back via ws_hub. The composer paints the user's
+    # own message optimistically, and broadcasting would double it on each
+    # connected client. Backend only broadcasts agent replies + status.
 
     # Run through the same pipeline as WhatsApp text. Use a fake "whatsapp:"
     # prefix so the existing handler can extract an E.164 cleanly.
