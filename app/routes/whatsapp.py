@@ -4,9 +4,11 @@ from loguru import logger
 from app.config import settings
 from app.lib.verify import verify_twilio_signature
 from app.services import audio_store, business_profile
+from app.services.intent import classify as classify_intent
 from app.services.lang_detect import detect_lang
 from app.services.onboarding import run_onboarding
 from app.services.openclaw import ask_openclaw
+from app.services.poster import generate_poster
 from app.services.scrape import find_urls
 from app.services.stt import transcribe
 from app.services.tts import synthesize
@@ -63,29 +65,62 @@ async def _process_onboarding(from_: str, e164: str, url: str) -> None:
     send_whatsapp(from_, summary[:1500])
 
 
+def _public_image_url(name: str) -> str:
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/audio/{name}"
+
+
+async def _process_poster(from_: str, e164: str, brief: str) -> None:
+    profile = business_profile.get(e164)
+    send_whatsapp(from_, "🎨 Designing your poster… (~20 sec)")
+    try:
+        image, mime = await generate_poster(brief, profile=profile)
+    except Exception as e:
+        logger.exception("poster generation failed")
+        send_whatsapp(from_, f"Couldn't generate the poster: {e}")
+        return
+
+    ext = "png" if "png" in mime else ("jpg" if "jpeg" in mime else "png")
+    name = audio_store.save(image, ext)
+    url = _public_image_url(name)
+
+    business_name = (profile.name if profile else None) or "your business"
+    caption = f"🖼️ Poster for {business_name}\nReply with edits, or 'post' when ready."
+    try:
+        send_whatsapp_media(from_, url, body=caption)
+    except Exception:
+        logger.exception("twilio media send failed")
+        send_whatsapp(from_, f"Poster ready: {url}")
+
+
 async def _process_text(from_: str, text: str, *, with_audio: bool = False,
                         lang: str = "en-IN") -> None:
     e164 = from_.removeprefix("whatsapp:") if from_.startswith("whatsapp:") else from_
 
-    # Onboarding: if user sends a URL and we don't yet have a confirmed
-    # profile for them, run scrape + extract instead of routing to OpenClaw.
     profile = business_profile.get(e164)
     urls_in_msg = find_urls(text)
+
+    # Onboarding flow: URL detected and no confirmed profile → scrape.
     if urls_in_msg and (profile is None or not profile.confirmed):
         await _process_onboarding(from_, e164, urls_in_msg[0])
         return
 
-    # Confirm step: user replies "yes" to confirm an unconfirmed profile.
-    if (
-        profile is not None
-        and not profile.confirmed
-        and text.strip().lower() in {"yes", "y", "confirm", "ok", "okay", "ఔను", "हाँ"}
-    ):
+    intent = classify_intent(text)
+    logger.info(f"intent classified text={text!r} intent={intent}")
+
+    # Confirm pending onboarding profile.
+    if intent == "confirm" and profile is not None and not profile.confirmed:
         business_profile.confirm(e164)
         name = profile.name or "your business"
         send_whatsapp(from_, f"✅ Saved profile for {name}. You can ask me anything now.")
         return
 
+    # Poster intent: generate a brand-aware marketing creative.
+    if intent == "poster":
+        await _process_poster(from_, e164, text)
+        return
+
+    # Default: forward to OpenClaw agent.
     try:
         reply = await ask_openclaw(text, to=e164, timeout=120)
     except Exception as e:

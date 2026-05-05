@@ -23,13 +23,24 @@ async def serve_static(name: str):
     return FileResponse(path, media_type="audio/mpeg", filename=name)
 
 
+_MIME_BY_EXT = {
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
+
 @router.get("/{name}")
 async def serve_audio(name: str):
-    """One-off TTS replies (TTL cached)."""
+    """One-off TTS replies (audio) and generated posters (images)."""
     if not _safe(name):
         raise HTTPException(404)
     path = path_for(name)
     if not path.is_file():
         raise HTTPException(404)
-    media_type = "audio/wav" if name.endswith(".wav") else "audio/mpeg"
+    ext = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    media_type = _MIME_BY_EXT.get(ext, "application/octet-stream")
     return FileResponse(path, media_type=media_type, filename=name)

@@ -25,9 +25,18 @@ class Settings(BaseSettings):
     sarvam_api_key: str = ""
     sarvam_base_url: str = "https://api.sarvam.ai"
 
+    gemini_api_key: str = ""
+    gemini_image_model: str = "gemini-2.5-flash-image-preview"
+
+    composio_api_key: str = ""
+
     @property
     def sarvam_key(self) -> str:
         return self.sarvam_api_key.strip()
+
+    @property
+    def gemini_key(self) -> str:
+        return self.gemini_api_key.strip()
 
     postgres_user: str = "agent"
     postgres_password: str = ""
