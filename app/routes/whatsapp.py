@@ -3,7 +3,7 @@ from loguru import logger
 
 from app.config import settings
 from app.lib.verify import verify_twilio_signature
-from app.services import audio_store, business_profile
+from app.services import audio_store, business_profile, ws_hub
 from app.services.intent import classify as classify_intent
 from app.services.lang_detect import detect_lang
 from app.services.onboarding import run_onboarding
@@ -35,8 +35,14 @@ def _public_audio_url(name: str) -> str:
     return f"{base}/audio/{name}"
 
 
+def _phone_only(to: str) -> str:
+    return to.removeprefix("whatsapp:") if to.startswith("whatsapp:") else to
+
+
 async def _send_reply(to: str, text: str, *, with_audio: bool, lang: str) -> None:
     """Always sends text. If `with_audio`, also sends a TTS audio version."""
+    phone = _phone_only(to)
+    ws_hub.fire(phone, channel="whatsapp", direction="out", body=text[:1500], lang=lang)
     try:
         send_whatsapp(to, text[:1500])
     except Exception:
@@ -55,6 +61,8 @@ async def _send_reply(to: str, text: str, *, with_audio: bool, lang: str) -> Non
 
 
 async def _process_onboarding(from_: str, e164: str, url: str) -> None:
+    ws_hub.fire(e164, channel="system", direction="out", kind="status", status="scraping",
+                body=f"Scraping {url}")
     send_whatsapp(from_, "🔎 Got it. Fetching your business info — this takes ~30 sec…")
     try:
         _, summary = await run_onboarding(e164, url)
@@ -62,6 +70,7 @@ async def _process_onboarding(from_: str, e164: str, url: str) -> None:
         logger.exception("onboarding failed")
         send_whatsapp(from_, f"Onboarding error: {e}")
         return
+    ws_hub.fire(e164, channel="system", direction="out", kind="status", status="onboarding_done")
     send_whatsapp(from_, summary[:1500])
 
 
@@ -72,6 +81,8 @@ def _public_image_url(name: str) -> str:
 
 async def _process_poster(from_: str, e164: str, brief: str) -> None:
     profile = business_profile.get(e164)
+    ws_hub.fire(e164, channel="system", direction="out", kind="status",
+                status="designing", body=brief)
     send_whatsapp(from_, "🎨 Designing your poster… (~20 sec)")
     try:
         image, mime = await generate_poster(brief, profile=profile)
@@ -86,6 +97,8 @@ async def _process_poster(from_: str, e164: str, brief: str) -> None:
 
     business_name = (profile.name if profile else None) or "your business"
     caption = f"🖼️ Poster for {business_name}\nReply with edits, or 'post' when ready."
+    ws_hub.fire(e164, channel="whatsapp", direction="out",
+                body=caption, media_url=url, kind="message")
     try:
         send_whatsapp_media(from_, url, body=caption)
     except Exception:
@@ -184,6 +197,9 @@ async def whatsapp_webhook(request: Request, background: BackgroundTasks):
 
     if not body.strip():
         return _twiml("Send me a message and I will get on it.")
+
+    # broadcast inbound to UI subscribers
+    ws_hub.fire(_phone_only(from_), channel="whatsapp", direction="in", body=body)
 
     background.add_task(_process_text, from_, body)
     return _twiml("Working on it…")

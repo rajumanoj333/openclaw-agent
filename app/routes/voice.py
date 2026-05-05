@@ -17,7 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Form, Request, Response
 from loguru import logger
 
 from app.config import settings
-from app.services import audio_store, voice_prompts, voice_session
+from app.services import audio_store, voice_prompts, voice_session, ws_hub
 from app.services.lang_detect import detect_lang
 from app.services.openclaw import ask_openclaw
 from app.services.stt import transcribe
@@ -214,6 +214,10 @@ async def _process_voice_call(caller: str, recording_url: str, lang: str) -> Non
         f"final={final_lang} text={transcript!r}"
     )
 
+    # Broadcast voice transcript to UI subscribers
+    ws_hub.fire(caller, channel="voice", direction="in",
+                body=transcript, lang=final_lang)
+
     try:
         send_whatsapp(
             wa_to,
@@ -246,6 +250,10 @@ async def _process_voice_call(caller: str, recording_url: str, lang: str) -> Non
         make_call(caller, twiml_url)
     except Exception:
         logger.exception("outbound call failed")
+
+    # Broadcast voice reply to UI
+    ws_hub.fire(caller, channel="voice", direction="out",
+                body=reply[:1400], lang=reply_lang)
 
     try:
         send_whatsapp(wa_to, f"📞 Result:\n{reply[:1400]}")
