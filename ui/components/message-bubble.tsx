@@ -27,12 +27,12 @@ export function MessageBubble({ ev }: { ev: ChatEvent }) {
             <div className="mt-2.5">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={ev.media_url}
+                src={`/api/img?url=${encodeURIComponent(ev.media_url)}`}
                 alt="media"
                 className="rounded-lg max-h-72 border border-border"
               />
               <a
-                href={ev.media_url}
+                href={`/api/img?url=${encodeURIComponent(ev.media_url)}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-1.5 text-[11px] text-accent hover:underline block"

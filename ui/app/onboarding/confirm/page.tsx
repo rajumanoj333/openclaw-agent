@@ -186,6 +186,7 @@ export default function ConfirmProfilePage() {
             src={profile.logo_url}
             alt="Logo"
             className="max-h-24 rounded-lg border border-border bg-white p-2"
+            referrerPolicy="no-referrer"
           />
         </div>
       )}
