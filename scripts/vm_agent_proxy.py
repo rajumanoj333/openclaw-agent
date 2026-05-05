@@ -30,7 +30,9 @@ DEFAULT_TIMEOUT = int(os.environ.get("OPENCLAW_TIMEOUT", "120"))
 
 
 class AgentRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=4000)
+    # Onboarding prompts can ship 20k+ chars of scraped page text, so we
+    # set a generous ceiling. OpenClaw's own context window is the real limit.
+    message: str = Field(..., min_length=1, max_length=80000)
     agent: str = DEFAULT_AGENT
     to: str | None = None
     session_id: str | None = None
