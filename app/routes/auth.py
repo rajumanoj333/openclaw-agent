@@ -8,7 +8,6 @@ when promoting to staging.
 """
 from __future__ import annotations
 
-import secrets
 import time
 from typing import Any
 
@@ -26,17 +25,9 @@ _JWT_SECRET = (settings.twilio_auth_token or "demo-secret-change-me")[:32].ljust
 _JWT_ALG = "HS256"
 _JWT_TTL = 7 * 24 * 60 * 60  # 7 days
 
-# In-memory OTP store: phone -> (code, expires_at)
-_otp_store: dict[str, tuple[str, float]] = {}
 
-
-class StartReq(BaseModel):
+class LoginReq(BaseModel):
     phone: str = Field(..., min_length=8, max_length=20)
-
-
-class VerifyReq(BaseModel):
-    phone: str = Field(..., min_length=8, max_length=20)
-    code: str = Field(..., min_length=4, max_length=8)
 
 
 def _norm_phone(p: str) -> str:
@@ -46,39 +37,41 @@ def _norm_phone(p: str) -> str:
     return p
 
 
-def _send_otp(phone: str, code: str) -> None:
-    """
-    Demo: log the code; in production this calls Twilio Verify or sends an SMS.
-    """
-    logger.info(f"OTP for {phone}: {code} (DEMO — never log in production)")
+def _issue_token(phone: str) -> dict[str, Any]:
+    payload = {
+        "phone": phone,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + _JWT_TTL,
+    }
+    token = jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALG)
+    return {"token": token, "phone": phone, "expires_in": _JWT_TTL}
 
 
-@router.post("/start")
-async def auth_start(req: StartReq) -> dict[str, Any]:
+@router.post("/login")
+async def auth_login(req: LoginReq) -> dict[str, Any]:
+    """
+    Demo-grade: accept any phone, return a JWT immediately. No OTP step.
+    Replace with Twilio Verify before exposing publicly.
+    """
     phone = _norm_phone(req.phone)
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    _otp_store[phone] = (code, time.time() + 5 * 60)
-    _send_otp(phone, code)
-    return {"sent": True, "phone": phone, "demo_hint": "check uvicorn log"}
+    logger.info(f"login phone={phone} (demo mode — no OTP)")
+    return _issue_token(phone)
+
+
+# Back-compat: keep old endpoints as no-ops in case the UI hits them.
+@router.post("/start")
+async def auth_start_stub(req: LoginReq) -> dict[str, Any]:
+    return {"sent": True, "phone": _norm_phone(req.phone), "demo_hint": "demo: any code"}
+
+
+class VerifyReq(BaseModel):
+    phone: str = Field(..., min_length=8, max_length=20)
+    code: str = Field(default="000000", min_length=1, max_length=8)
 
 
 @router.post("/verify")
-async def auth_verify(req: VerifyReq) -> dict[str, Any]:
-    phone = _norm_phone(req.phone)
-    entry = _otp_store.get(phone)
-    if not entry:
-        raise HTTPException(400, "no OTP requested for this phone")
-    code, exp = entry
-    if time.time() > exp:
-        _otp_store.pop(phone, None)
-        raise HTTPException(400, "OTP expired")
-    if req.code.strip() != code:
-        raise HTTPException(401, "invalid OTP")
-
-    _otp_store.pop(phone, None)
-    payload = {"phone": phone, "iat": int(time.time()), "exp": int(time.time()) + _JWT_TTL}
-    token = jwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALG)
-    return {"token": token, "phone": phone, "expires_in": _JWT_TTL}
+async def auth_verify_stub(req: VerifyReq) -> dict[str, Any]:
+    return _issue_token(_norm_phone(req.phone))
 
 
 def verify_jwt(token: str) -> str:

@@ -57,13 +57,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (await r.json()) as T;
 }
 
-export interface StartResp {
-  sent: boolean;
-  phone: string;
-  demo_hint?: string;
-}
-
-export interface VerifyResp {
+export interface LoginResp {
   token: string;
   phone: string;
   expires_in: number;
@@ -123,16 +117,10 @@ export interface AgentCfg {
 }
 
 export const api = {
-  authStart: (phone: string) =>
-    req<StartResp>("/auth/start", {
+  login: (phone: string) =>
+    req<LoginResp>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ phone }),
-    }),
-
-  authVerify: (phone: string, code: string) =>
-    req<VerifyResp>("/auth/verify", {
-      method: "POST",
-      body: JSON.stringify({ phone, code }),
     }),
 
   onboardingStatus: () => req<OnboardingStatus>("/onboarding/status"),
