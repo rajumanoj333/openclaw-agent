@@ -19,28 +19,21 @@ from app.services.business_profile import BusinessProfile
 
 def _build_prompt(brief: str, profile: BusinessProfile | None) -> str:
     """
-    Compose a structured prompt that nudges Gemini toward on-brand output.
+    Compose a rich, marketing-grade prompt for the image model.
+    Aim: a poster a real designer would ship, on-brand and on-message.
     """
-    parts: list[str] = [
-        "Generate a high-quality vertical (9:16) social-media marketing poster.",
-        f"Topic / message: {brief.strip()}",
-    ]
-
+    name = (profile.name if profile else None) or "the business"
+    biz_type = ""
     if profile:
-        if profile.name:
-            parts.append(f"Business name: {profile.name}")
-        if profile.type or profile.category:
-            biz = " — ".join(x for x in (profile.type, profile.category) if x)
-            parts.append(f"Business type: {biz}")
-        if profile.services:
-            parts.append(f"Featured services: {', '.join(profile.services[:3])}")
-        if profile.brand.tagline:
-            parts.append(f"Tagline to display prominently: \"{profile.brand.tagline}\"")
-        if profile.brand.tone:
-            parts.append(f"Brand tone of voice: {profile.brand.tone}")
-        if profile.brand.visual_style:
-            parts.append(f"Visual style: {profile.brand.visual_style}")
+        biz_type = " — ".join(x for x in (profile.type, profile.category) if x)
 
+    services = ", ".join(profile.services[:3]) if profile and profile.services else ""
+    tagline = profile.brand.tagline if profile and profile.brand.tagline else ""
+    tone = profile.brand.tone if profile and profile.brand.tone else "modern"
+    style = profile.brand.visual_style if profile and profile.brand.visual_style else "clean editorial"
+
+    colors: list[str] = []
+    if profile:
         colors = [
             c for c in (
                 profile.brand.primary_color,
@@ -48,24 +41,31 @@ def _build_prompt(brief: str, profile: BusinessProfile | None) -> str:
                 profile.brand.accent_color,
             ) if c
         ]
-        if not colors and profile.raw_colors:
+        if not colors:
             colors = profile.raw_colors[:3]
-        if colors:
-            parts.append(
-                "Use these brand colors prominently in backgrounds, gradients, "
-                f"and accents (don't deviate): {', '.join(colors)}"
-            )
+    color_phrase = (
+        f"Use these exact brand colors as the dominant palette (no other hues): {', '.join(colors)}."
+        if colors else ""
+    )
 
-        if profile.brand.logo_description:
-            parts.append(f"Logo: {profile.brand.logo_description}")
-
-    parts.extend([
-        "Composition: clean editorial layout, strong typography, ample contrast, "
-        "no Lorem Ipsum text, no watermarks, no sample words.",
-        "Output format: vertical 9:16, photorealistic where relevant, sharp readable headline.",
-    ])
-
-    return "\n".join(parts)
+    return (
+        f"Professional marketing poster for {name}"
+        f"{f', a {biz_type}' if biz_type else ''}.\n"
+        f"Headline message: \"{brief.strip()}\".\n"
+        f"{f'Tagline overlay: \"{tagline}\". ' if tagline else ''}"
+        f"{f'Featured: {services}. ' if services else ''}"
+        f"Tone: {tone}. Visual style: {style}.\n"
+        f"{color_phrase}\n"
+        f"Composition: vertical 9:16, large bold headline at top in a serif "
+        f"or geometric sans display font, secondary line beneath, subject "
+        f"or product photography occupying the middle 60%, brand-color "
+        f"accents and gradients, clean negative space at the bottom for a "
+        f"call-to-action button. Strong contrast, premium feel, magazine-cover "
+        f"quality. No watermarks, no lorem ipsum, no sample placeholder text, "
+        f"no logos other than the implied brand mark.\n"
+        f"Lighting: dramatic studio or editorial. Make the headline text "
+        f"crisp and legible — short, punchy, no spelling errors."
+    )
 
 
 async def generate_poster(
@@ -75,23 +75,87 @@ async def generate_poster(
     """
     Returns (image_bytes, mime_type). Raises RuntimeError on failure.
 
-    Tries Gemini first; falls back to Pollinations.ai (free, no-auth) on
-    quota error or missing API key.
+    Pipeline:
+      1. Build brand-aware prompt
+      2. Try Gemini → fall back to Pollinations on quota
+      3. If profile has a logo URL, composite it onto the generated image
     """
     prompt = _build_prompt(brief, profile)
 
     if not settings.gemini_key:
         logger.info("GEMINI_API_KEY missing — using Pollinations fallback")
-        return await _pollinations(prompt)
+        image, mime = await _pollinations(prompt)
+    else:
+        try:
+            image, mime = await _gemini_generate(prompt)
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
+                logger.warning(f"gemini quota — falling back to Pollinations: {e!r}")
+                image, mime = await _pollinations(prompt)
+            else:
+                raise
 
-    try:
-        return await _gemini_generate(prompt)
-    except Exception as e:
-        msg = str(e)
-        if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
-            logger.warning(f"gemini quota — falling back to Pollinations: {e!r}")
-            return await _pollinations(prompt)
-        raise
+    if profile and profile.logo_url:
+        try:
+            image, mime = await _overlay_logo(image, mime, profile.logo_url)
+        except Exception:
+            logger.exception("logo overlay failed; returning poster without logo")
+
+    return image, mime
+
+
+async def _overlay_logo(
+    poster_bytes: bytes,
+    poster_mime: str,
+    logo_url: str,
+) -> tuple[bytes, str]:
+    """
+    Fetch the business logo and paste it onto the bottom-center of the
+    generated poster. Always returns PNG to preserve transparency.
+    """
+    import io
+    import asyncio
+    import httpx
+    from PIL import Image
+
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        resp = await client.get(logo_url, headers={"User-Agent": "Mozilla/5.0"})
+        resp.raise_for_status()
+        logo_bytes = resp.content
+
+    def _composite() -> bytes:
+        poster = Image.open(io.BytesIO(poster_bytes)).convert("RGBA")
+        logo = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
+
+        # scale logo to ~14% of poster width, preserve aspect
+        target_w = max(120, int(poster.width * 0.14))
+        ratio = target_w / logo.width
+        target_h = int(logo.height * ratio)
+        logo = logo.resize((target_w, target_h), Image.LANCZOS)
+
+        # white rounded badge behind logo for legibility
+        pad = max(8, int(target_w * 0.08))
+        badge = Image.new(
+            "RGBA",
+            (target_w + pad * 2, target_h + pad * 2),
+            (255, 255, 255, 230),
+        )
+
+        # bottom-center placement, ~5% from edge
+        x = (poster.width - badge.width) // 2
+        y = poster.height - badge.height - int(poster.height * 0.05)
+
+        poster.alpha_composite(badge, (x, y))
+        poster.alpha_composite(logo, (x + pad, y + pad))
+
+        out = io.BytesIO()
+        poster.convert("RGB").save(out, format="PNG", optimize=True)
+        return out.getvalue()
+
+    composed = await asyncio.to_thread(_composite)
+    logger.info(f"logo overlay applied bytes={len(composed)}")
+    return composed, "image/png"
 
 
 async def _pollinations(prompt: str) -> tuple[bytes, str]:

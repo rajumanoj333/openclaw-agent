@@ -17,6 +17,7 @@ google-cloud-texttospeech==2.23.0
 
 # Audio
 pydub==0.25.1
+Pillow>=10.0.0
 
 # Scraping (business onboarding)
 beautifulsoup4==4.12.3
