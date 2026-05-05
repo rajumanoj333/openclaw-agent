@@ -18,6 +18,10 @@ google-cloud-texttospeech==2.23.0
 # Audio
 pydub==0.25.1
 
+# Scraping (business onboarding)
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
 # DB
 sqlalchemy==2.0.36
 asyncpg==0.30.0

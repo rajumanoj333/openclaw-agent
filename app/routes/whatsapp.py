@@ -3,9 +3,11 @@ from loguru import logger
 
 from app.config import settings
 from app.lib.verify import verify_twilio_signature
-from app.services import audio_store
+from app.services import audio_store, business_profile
 from app.services.lang_detect import detect_lang
+from app.services.onboarding import run_onboarding
 from app.services.openclaw import ask_openclaw
+from app.services.scrape import find_urls
 from app.services.stt import transcribe
 from app.services.tts import synthesize
 from app.services.twilio_client import send_whatsapp, send_whatsapp_media
@@ -50,9 +52,40 @@ async def _send_reply(to: str, text: str, *, with_audio: bool, lang: str) -> Non
         logger.exception("tts/audio send failed")
 
 
+async def _process_onboarding(from_: str, e164: str, url: str) -> None:
+    send_whatsapp(from_, "🔎 Got it. Fetching your business info — this takes ~30 sec…")
+    try:
+        _, summary = await run_onboarding(e164, url)
+    except Exception as e:
+        logger.exception("onboarding failed")
+        send_whatsapp(from_, f"Onboarding error: {e}")
+        return
+    send_whatsapp(from_, summary[:1500])
+
+
 async def _process_text(from_: str, text: str, *, with_audio: bool = False,
                         lang: str = "en-IN") -> None:
     e164 = from_.removeprefix("whatsapp:") if from_.startswith("whatsapp:") else from_
+
+    # Onboarding: if user sends a URL and we don't yet have a confirmed
+    # profile for them, run scrape + extract instead of routing to OpenClaw.
+    profile = business_profile.get(e164)
+    urls_in_msg = find_urls(text)
+    if urls_in_msg and (profile is None or not profile.confirmed):
+        await _process_onboarding(from_, e164, urls_in_msg[0])
+        return
+
+    # Confirm step: user replies "yes" to confirm an unconfirmed profile.
+    if (
+        profile is not None
+        and not profile.confirmed
+        and text.strip().lower() in {"yes", "y", "confirm", "ok", "okay", "ఔను", "हाँ"}
+    ):
+        business_profile.confirm(e164)
+        name = profile.name or "your business"
+        send_whatsapp(from_, f"✅ Saved profile for {name}. You can ask me anything now.")
+        return
+
     try:
         reply = await ask_openclaw(text, to=e164, timeout=120)
     except Exception as e:
