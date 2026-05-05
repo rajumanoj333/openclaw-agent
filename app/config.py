@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_image_model: str = "gemini-2.5-flash-image"
+    # Fallback chain — try each on quota error.
+    # Override via env: GEMINI_IMAGE_FALLBACK="gemini-3.1-flash-image-preview,gemini-3-pro-image-preview"
+    gemini_image_fallback: str = (
+        "gemini-3.1-flash-image-preview,gemini-3-pro-image-preview"
+    )
 
     composio_api_key: str = ""
 

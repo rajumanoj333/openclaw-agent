@@ -129,24 +129,44 @@ async def generate_poster(
 
     Pipeline:
       1. Build brand-aware prompt
-      2. Try Gemini → fall back to Pollinations on quota
-      3. If profile has a logo URL, composite it onto the generated image
+      2. Try Gemini Nano Banana models in order (2.5 → 3.1 → 3-pro)
+      3. Fall back to Pollinations Flux on all quota errors
+      4. If profile has a logo URL, composite it onto the generated image
     """
     prompt = _build_prompt(brief, profile)
 
-    if not settings.gemini_key:
-        logger.info("GEMINI_API_KEY missing — using Pollinations fallback")
-        image, mime = await _pollinations(prompt)
-    else:
-        try:
-            image, mime = await _gemini_generate(prompt)
-        except Exception as e:
-            msg = str(e)
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
-                logger.warning(f"gemini quota — falling back to Pollinations: {e!r}")
-                image, mime = await _pollinations(prompt)
-            else:
+    image: bytes | None = None
+    mime: str | None = None
+
+    if settings.gemini_key:
+        models = [settings.gemini_image_model] + [
+            m.strip()
+            for m in settings.gemini_image_fallback.split(",")
+            if m.strip() and m.strip() != settings.gemini_image_model
+        ]
+        for model in models:
+            try:
+                image, mime = await _gemini_generate(prompt, model)
+                logger.info(f"poster engine=gemini model={model}")
+                break
+            except Exception as e:
+                msg = str(e)
+                if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
+                    logger.warning(f"gemini quota model={model} — trying next")
+                    continue
                 raise
+
+    if image is None:
+        logger.info("poster engine=pollinations model=flux (fallback)")
+        image, mime = await _pollinations(prompt)
+
+    if profile and profile.logo_url:
+        try:
+            image, mime = await _overlay_logo(image, mime or "image/jpeg", profile.logo_url)
+        except Exception:
+            logger.exception("logo overlay failed; returning poster without logo")
+
+    return image, mime or "image/jpeg"
 
     if profile and profile.logo_url:
         try:
@@ -242,8 +262,10 @@ async def _pollinations(prompt: str) -> tuple[bytes, str]:
     return resp.content, "image/jpeg"
 
 
-async def _gemini_generate(prompt: str) -> tuple[bytes, str]:
-    """Original Gemini path, kept as primary when quota allows."""
+async def _gemini_generate(prompt: str, model: str | None = None) -> tuple[bytes, str]:
+    """Gemini Nano Banana image generation. Caller can pin a specific model."""
+    chosen = model or settings.gemini_image_model
+
     def _run() -> tuple[bytes, str]:
         # Lazy import: keeps app boot snappy if Gemini key isn't configured yet.
         from google import genai
@@ -253,7 +275,7 @@ async def _gemini_generate(prompt: str) -> tuple[bytes, str]:
         # Gemini image-generation models accept a plain prompt and return
         # candidates whose `parts` contain `inline_data` with the image bytes.
         response = client.models.generate_content(
-            model=settings.gemini_image_model,
+            model=chosen,
             contents=[prompt],
         )
 
@@ -286,5 +308,5 @@ async def _gemini_generate(prompt: str) -> tuple[bytes, str]:
         )
 
     image, mime = await asyncio.to_thread(_run)
-    logger.info(f"gemini poster bytes={len(image)} mime={mime}")
+    logger.info(f"gemini poster bytes={len(image)} mime={mime} model={chosen}")
     return image, mime
