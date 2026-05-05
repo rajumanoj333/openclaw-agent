@@ -253,7 +253,7 @@ async def _process_voice_call(caller: str, recording_url: str, lang: str) -> Non
 
     # Broadcast voice reply to UI
     ws_hub.fire(caller, channel="voice", direction="out",
-                body=reply[:1400], lang=reply_lang)
+                body=reply[:1400], lang=final_lang)
 
     try:
         send_whatsapp(wa_to, f"📞 Result:\n{reply[:1400]}")
