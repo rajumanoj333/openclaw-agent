@@ -17,20 +17,46 @@ from app.config import settings
 from app.services.business_profile import BusinessProfile
 
 
+def _hero_subject_for(brief: str, profile: BusinessProfile | None) -> str:
+    """
+    Derive a concrete photographic subject from the user's brief + business
+    type. Image models render a clear *thing* much better than abstract text.
+    """
+    biz_type = ((profile.type or "") + " " + (profile.category or "")).lower() if profile else ""
+    b = brief.lower()
+
+    # Heuristic mapping: business type → hero photo subject
+    if any(k in biz_type for k in ("baby", "kid", "toy", "child")):
+        return "a smiling baby playing with colorful toys, soft pastel props"
+    if any(k in biz_type for k in ("food", "restaurant", "cafe", "bakery", "pizza")):
+        return "an oversized appetizing dish on a glossy plate, steam rising"
+    if any(k in biz_type for k in ("salon", "beauty", "spa")):
+        return "a glowing close-up of skincare products beside a tranquil model"
+    if any(k in biz_type for k in ("fashion", "apparel", "clothing")):
+        return "a stylish model in a modern outfit, editorial pose"
+    if any(k in biz_type for k in ("clinic", "health", "medical")):
+        return "a confident smiling person in a clinic setting, soft natural light"
+    if any(k in biz_type for k in ("tech", "software", "saas")):
+        return "a sleek device or abstract glowing interface, futuristic minimal"
+    # Brief-based fallback
+    if "diwali" in b:
+        return "ornate diyas and rangoli with festive sparkle"
+    if any(k in b for k in ("sale", "offer", "discount")):
+        return "an elegant product hero shot with a subtle price-tag accent"
+    return "a hero product photograph, premium commercial style"
+
+
 def _build_prompt(brief: str, profile: BusinessProfile | None) -> str:
     """
-    Compose a rich, marketing-grade prompt for the image model.
-    Aim: a poster a real designer would ship, on-brand and on-message.
+    KFC-style structured prompt. Sections in order: scene → subject →
+    composition → typography → tagline → palette. Image model renders each
+    section as a separate visual ingredient.
     """
     name = (profile.name if profile else None) or "the business"
-    biz_type = ""
-    if profile:
-        biz_type = " — ".join(x for x in (profile.type, profile.category) if x)
-
+    tone = (profile.brand.tone if profile else None) or "modern"
+    style = (profile.brand.visual_style if profile else None) or "premium editorial"
+    tagline = (profile.brand.tagline if profile else None) or ""
     services = ", ".join(profile.services[:3]) if profile and profile.services else ""
-    tagline = profile.brand.tagline if profile and profile.brand.tagline else ""
-    tone = profile.brand.tone if profile and profile.brand.tone else "modern"
-    style = profile.brand.visual_style if profile and profile.brand.visual_style else "clean editorial"
 
     colors: list[str] = []
     if profile:
@@ -40,32 +66,58 @@ def _build_prompt(brief: str, profile: BusinessProfile | None) -> str:
                 profile.brand.secondary_color,
                 profile.brand.accent_color,
             ) if c
-        ]
-        if not colors:
-            colors = profile.raw_colors[:3]
-    color_phrase = (
-        f"Use these exact brand colors as the dominant palette (no other hues): {', '.join(colors)}."
-        if colors else ""
-    )
+        ] or profile.raw_colors[:3]
 
-    return (
-        f"Professional marketing poster for {name}"
-        f"{f', a {biz_type}' if biz_type else ''}.\n"
-        f"Headline message: \"{brief.strip()}\".\n"
-        f"{f'Tagline overlay: \"{tagline}\". ' if tagline else ''}"
-        f"{f'Featured: {services}. ' if services else ''}"
-        f"Tone: {tone}. Visual style: {style}.\n"
-        f"{color_phrase}\n"
-        f"Composition: vertical 9:16, large bold headline at top in a serif "
-        f"or geometric sans display font, secondary line beneath, subject "
-        f"or product photography occupying the middle 60%, brand-color "
-        f"accents and gradients, clean negative space at the bottom for a "
-        f"call-to-action button. Strong contrast, premium feel, magazine-cover "
-        f"quality. No watermarks, no lorem ipsum, no sample placeholder text, "
-        f"no logos other than the implied brand mark.\n"
-        f"Lighting: dramatic studio or editorial. Make the headline text "
-        f"crisp and legible — short, punchy, no spelling errors."
-    )
+    primary = colors[0] if colors else "#cc0066"
+    secondary = colors[1] if len(colors) > 1 else "#ffce00"
+
+    hero = _hero_subject_for(brief, profile)
+
+    sections = [
+        # 1. Scene
+        f"A high-end studio advertisement poster for {name}, "
+        f"shot in {style} style with {tone} mood. "
+        f"Background: smooth gradient from {primary} to {secondary} with soft "
+        f"diffused lighting and subtle reflections.",
+
+        # 2. Hero subject
+        f"Centered hero subject: {hero}. "
+        f"{f'Subtle accents referencing: {services}.' if services else ''}",
+
+        # 3. Composition
+        "Composition: ultra-sharp, cinematic lighting, premium commercial "
+        "photography style, shallow depth of field, hyper-realistic textures, "
+        "8K detail, vertical 9:16 layout, ample negative space at top and bottom.",
+
+        # 4. Typography (large brand name)
+        f"Large bold typography in the upper area: \"{name.upper()}\" — clean "
+        f"display sans-serif, tight kerning, in {primary} or pure white for "
+        f"maximum contrast against the gradient.",
+
+        # 5. Headline / brief
+        f"Sub-headline beneath the brand name: \"{brief.strip()[:80]}\" — "
+        f"smaller editorial serif, single line, all letters readable.",
+
+        # 6. Tagline
+        f"Tagline at the bottom in small caps: \"{tagline or _default_tagline(brief)}\".",
+
+        # 7. Constraints
+        "No lorem ipsum, no sample placeholder text, no garbled letters, "
+        "no watermarks, no extra logos. Every word must be a real, correctly "
+        "spelled word. Premium magazine-cover finish.",
+    ]
+    return " ".join(s.strip() for s in sections if s.strip())
+
+
+def _default_tagline(brief: str) -> str:
+    b = brief.lower()
+    if "diwali" in b:
+        return "Light up your celebrations."
+    if any(k in b for k in ("sale", "offer", "discount")):
+        return "Limited time only."
+    if any(k in b for k in ("launch", "new", "introducing")):
+        return "Now in stores."
+    return "Made for you."
 
 
 async def generate_poster(
@@ -161,25 +213,32 @@ async def _overlay_logo(
 async def _pollinations(prompt: str) -> tuple[bytes, str]:
     """
     Free image generation via https://image.pollinations.ai/prompt/<text>
-    No auth, no quota, returns JPEG. Slower (~5-15s) but reliable for demo.
+    No auth, no quota, returns JPEG.
+
+    Model = `flux` — better fidelity + typography vs default `turbo`.
+    Slower (~10-25s) but readable headlines + brand colors.
     """
     import re
 
     import httpx
     from urllib.parse import quote
 
-    # Flatten to single line + cap length — Pollinations 404s on overly long
-    # URLs with newlines.
-    flat = re.sub(r"\s+", " ", prompt).strip()[:600]
+    # Flatten newlines (Pollinations 404s on multi-line URLs) but keep
+    # comma+sentence structure so the model still parses sections.
+    flat = re.sub(r"\s+", " ", prompt).strip()[:1500]
 
+    model = "flux"
     url = (
         f"https://image.pollinations.ai/prompt/{quote(flat)}"
-        f"?width=768&height=1280&nologo=true"
+        f"?width=768&height=1280&nologo=true&model={model}&enhance=true"
     )
-    async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
         resp = await client.get(url)
         resp.raise_for_status()
-    logger.info(f"pollinations image bytes={len(resp.content)}")
+    logger.info(
+        f"pollinations image bytes={len(resp.content)} model={model} "
+        f"prompt_chars={len(flat)}"
+    )
     return resp.content, "image/jpeg"
 
 
