@@ -24,7 +24,7 @@ def _wrap_with_persona(message: str, phone: str | None) -> str:
     return f"{prefix}\n\n--- USER MESSAGE ---\n{message}"
 
 
-async def ask_openclaw(message: str, *, to: str | None = None, timeout: int = 90) -> str:
+async def ask_openclaw(message: str, *, to: str | None = None, timeout: int = 240) -> str:
     """
     Send `message` to OpenClaw via the VM proxy and return the assistant's
     reply text. `to` (E.164) lets the gateway derive a per-user session.

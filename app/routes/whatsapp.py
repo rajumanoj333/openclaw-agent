@@ -134,8 +134,9 @@ async def _process_text(from_: str, text: str, *, with_audio: bool = False,
         return
 
     # Default: forward to OpenClaw agent.
+    # Embedded runner can take ~90-180s for persona-wrapped prompts.
     try:
-        reply = await ask_openclaw(text, to=e164, timeout=120)
+        reply = await ask_openclaw(text, to=e164, timeout=240)
     except Exception as e:
         logger.exception("openclaw call failed")
         reply = f"Agent error: {e}"
