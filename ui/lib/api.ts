@@ -1,8 +1,7 @@
 /**
- * Tiny REST client for the FastAPI backend.
+ * REST client for the FastAPI backend.
  *
- * In dev: NEXT_PUBLIC_API_URL = http://localhost:8080
- * In prod: NEXT_PUBLIC_API_URL = https://<your-vm-domain> or ngrok URL
+ * In dev: NEXT_PUBLIC_API_URL = http://localhost:8080  (or your ngrok URL)
  */
 
 export const API_URL =
@@ -37,11 +36,17 @@ export function clearAuth(): void {
   window.localStorage.removeItem(PHONE_KEY);
 }
 
+function authHeaders(): HeadersInit {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders(),
       ...(init?.headers || {}),
     },
   });
@@ -64,6 +69,59 @@ export interface VerifyResp {
   expires_in: number;
 }
 
+export type OnboardingStep = "scrape" | "confirm" | "agent" | "ready";
+
+export interface OnboardingStatus {
+  phone: string;
+  has_profile: boolean;
+  profile_confirmed: boolean;
+  has_agent: boolean;
+  step: OnboardingStep;
+}
+
+export interface BrandKit {
+  primary_color: string | null;
+  secondary_color: string | null;
+  accent_color: string | null;
+  tone: string | null;
+  visual_style: string | null;
+  logo_description: string | null;
+  tagline: string | null;
+}
+
+export interface BusinessProfileT {
+  phone: string;
+  name: string | null;
+  type: string | null;
+  category: string | null;
+  description: string | null;
+  address: string | null;
+  city: string | null;
+  contact_phone: string | null;
+  email: string | null;
+  website: string | null;
+  socials: Record<string, string>;
+  timings: string | null;
+  services: string[];
+  pricing_note: string | null;
+  logo_url: string | null;
+  brand: BrandKit;
+  confidence: string;
+  source_urls: string[];
+  raw_colors: string[];
+  created_at: number;
+  confirmed: boolean;
+}
+
+export interface AgentCfg {
+  phone: string;
+  name: string;
+  capabilities: string[];
+  persona_extra: string;
+  created_at: number;
+  updated_at: number;
+}
+
 export const api = {
   authStart: (phone: string) =>
     req<StartResp>("/auth/start", {
@@ -76,4 +134,40 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ phone, code }),
     }),
+
+  onboardingStatus: () => req<OnboardingStatus>("/onboarding/status"),
+
+  capabilities: () => req<{ capabilities: string[] }>("/onboarding/capabilities"),
+
+  scrape: (url: string) =>
+    req<{ summary: string; profile: BusinessProfileT; next_step: OnboardingStep }>(
+      "/onboarding/scrape",
+      { method: "POST", body: JSON.stringify({ url }) },
+    ),
+
+  confirmProfile: (edits: Partial<BusinessProfileT> & {
+    primary_color?: string | null;
+    secondary_color?: string | null;
+    accent_color?: string | null;
+    tone?: string | null;
+    visual_style?: string | null;
+    tagline?: string | null;
+  }) =>
+    req<{ ok: boolean; profile: BusinessProfileT; next_step: OnboardingStep }>(
+      "/onboarding/confirm",
+      { method: "POST", body: JSON.stringify(edits) },
+    ),
+
+  saveAgent: (name: string, capabilities: string[], persona_extra = "") =>
+    req<{ ok: boolean; agent: AgentCfg; next_step: OnboardingStep }>(
+      "/onboarding/agent",
+      {
+        method: "POST",
+        body: JSON.stringify({ name, capabilities, persona_extra }),
+      },
+    ),
+
+  getProfile: () => req<BusinessProfileT>("/onboarding/profile"),
+
+  getAgent: () => req<AgentCfg>("/onboarding/agent"),
 };

@@ -33,7 +33,7 @@ export default function LoginPage() {
     try {
       const r = await api.authVerify(phone.trim(), code.trim());
       saveAuth(r.token, r.phone);
-      router.push("/chat");
+      router.push("/onboarding");
     } catch (e) {
       setErr(String(e));
     } finally {
