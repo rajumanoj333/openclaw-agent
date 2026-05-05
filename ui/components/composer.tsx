@@ -31,31 +31,33 @@ export function Composer({
   return (
     <form
       onSubmit={submit}
-      className="border-t border-border bg-panel/60 backdrop-blur p-3 flex items-end gap-2"
+      className="border-t border-border bg-bg-elev/50 backdrop-blur p-3.5"
     >
-      <textarea
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={onKey}
-        placeholder="Send your business URL, or ask me to design a poster…"
-        rows={1}
-        disabled={disabled}
-        className={cn(
-          "flex-1 resize-none bg-bg border border-border rounded-xl px-3 py-2 text-sm",
-          "outline-none focus:border-accent/60 max-h-32",
-        )}
-      />
-      <button
-        type="submit"
-        disabled={disabled || !value.trim()}
-        className={cn(
-          "h-9 w-9 flex items-center justify-center rounded-xl",
-          "bg-accent/80 hover:bg-accent text-bg disabled:opacity-30 disabled:cursor-not-allowed",
-        )}
-        aria-label="Send"
-      >
-        <Send size={16} />
-      </button>
+      <div className="flex items-end gap-2 bg-bg border border-border focus-within:border-accent rounded-2xl px-3.5 py-2 transition">
+        <textarea
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={onKey}
+          placeholder="Type a message — same as WhatsApp"
+          rows={1}
+          disabled={disabled}
+          className="flex-1 resize-none bg-transparent outline-none text-sm py-1 max-h-32"
+        />
+        <button
+          type="submit"
+          disabled={disabled || !value.trim()}
+          className={cn(
+            "h-8 w-8 flex items-center justify-center rounded-xl",
+            "bg-accent hover:bg-accent/90 text-bg disabled:opacity-30 disabled:cursor-not-allowed transition",
+          )}
+          aria-label="Send"
+        >
+          <Send size={14} />
+        </button>
+      </div>
+      <p className="text-[10px] text-text-mute mt-2 px-2">
+        Press Enter to send · Shift+Enter for new line
+      </p>
     </form>
   );
 }

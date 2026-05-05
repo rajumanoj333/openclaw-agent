@@ -1,8 +1,9 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { ArrowRight, Globe, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { LiveStatus } from "@/components/live-status";
 import { StepIndicator } from "@/components/step-indicator";
 import { api } from "@/lib/api";
 
@@ -27,22 +28,30 @@ export default function BusinessUrlPage() {
   };
 
   return (
-    <div className="bg-panel border border-border rounded-2xl p-8">
+    <div className="bg-panel/70 backdrop-blur border border-border rounded-2xl p-8 fade-in shadow-2xl">
       <StepIndicator active={0} />
 
-      <h1 className="text-2xl font-semibold mb-2">Tell me about your business</h1>
-      <p className="text-sm text-white/60 mb-6">
-        Paste your website, Instagram profile, or Google Maps link. I'll read
-        the page, pick out your services, brand colors, logo, and tone — then
-        ask you to confirm.
+      <div className="flex items-center gap-3 mb-2">
+        <div className="w-10 h-10 rounded-xl bg-accent/15 border border-accent/40 flex items-center justify-center">
+          <Globe size={20} className="text-accent" />
+        </div>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Tell me about your business
+        </h1>
+      </div>
+      <p className="text-sm text-text-dim mb-7 ml-13 pl-1">
+        Paste your website, Instagram, or Google Maps link. I'll read it and
+        pick out your services, brand colors, logo, and tone.
       </p>
 
-      <label className="text-xs text-white/60 block mb-1">Business link</label>
+      <label className="text-xs text-text-dim block mb-1.5 font-medium">
+        Business link
+      </label>
       <input
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         placeholder="https://your-business.com or instagram.com/yourhandle"
-        className="w-full bg-bg border border-border rounded-xl px-3 py-2 mb-3 outline-none focus:border-accent/60"
+        className="w-full bg-bg border border-border rounded-xl px-3.5 py-2.5 mb-4 outline-none focus:border-accent transition text-sm"
         disabled={busy}
         autoFocus
       />
@@ -50,22 +59,40 @@ export default function BusinessUrlPage() {
       <button
         onClick={submit}
         disabled={busy || !url.trim()}
-        className="w-full bg-accent text-bg rounded-xl py-2 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+        className="w-full bg-accent hover:bg-accent/90 text-bg rounded-xl py-2.5 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition"
       >
-        {busy ? <Loader2 size={16} className="animate-spin" /> : null}
-        {busy ? "Reading your site… (~30 sec)" : "Continue"}
+        {busy ? (
+          <>
+            <Loader2 size={16} className="animate-spin" />
+            Reading your site… this can take 60–120 sec
+          </>
+        ) : (
+          <>
+            Continue
+            <ArrowRight size={16} />
+          </>
+        )}
       </button>
 
+      {busy && (
+        <div className="mt-4 flex justify-center">
+          <LiveStatus />
+        </div>
+      )}
+
       {err && (
-        <p className="mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-2 break-all">
+        <p className="mt-3 text-xs text-danger bg-danger/10 border border-danger/30 rounded-lg p-2.5 break-all">
           {err}
         </p>
       )}
 
-      <p className="mt-6 text-xs text-white/40">
-        Tip: a website with an /about or /contact page works best. Instagram &
-        Facebook often block scrapers — try your website first.
-      </p>
+      <div className="mt-6 pt-5 border-t border-border">
+        <p className="text-xs text-text-mute leading-relaxed">
+          <strong className="text-text-dim">Tip:</strong> websites with /about
+          or /contact pages work best. Instagram & Facebook often block
+          scrapers — try your website first.
+        </p>
+      </div>
     </div>
   );
 }

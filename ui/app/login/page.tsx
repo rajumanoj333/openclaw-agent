@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Sparkles } from "lucide-react";
 import { api, saveAuth } from "@/lib/api";
 
 export default function LoginPage() {
@@ -31,39 +32,51 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-sm bg-panel border border-border rounded-2xl p-6">
-        <h1 className="text-xl font-semibold mb-1">Sign in to Morpheus</h1>
-        <p className="text-sm text-white/50 mb-6">
-          Enter your phone number to continue. No password needed.
-        </p>
+      <div className="w-full max-w-sm fade-in">
+        <div className="flex items-center justify-center mb-8">
+          <div className="w-12 h-12 rounded-2xl bg-accent/20 border border-accent/40 flex items-center justify-center">
+            <Sparkles className="text-accent" size={22} />
+          </div>
+        </div>
 
-        <label className="text-xs text-white/60 block mb-1">Phone (E.164)</label>
-        <input
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          onKeyDown={onKey}
-          placeholder="+919999999999"
-          autoFocus
-          className="w-full bg-bg border border-border rounded-xl px-3 py-2 mb-3 outline-none focus:border-accent/60"
-          disabled={busy}
-        />
-
-        <button
-          disabled={busy || !phone.trim() || phone.trim() === "+"}
-          onClick={submit}
-          className="w-full bg-accent text-bg rounded-xl py-2 font-medium disabled:opacity-50"
-        >
-          {busy ? "Signing in…" : "Continue →"}
-        </button>
-
-        {err && (
-          <p className="mt-3 text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-2 break-all">
-            {err}
+        <div className="bg-panel/70 backdrop-blur border border-border rounded-2xl p-7 shadow-2xl">
+          <h1 className="text-2xl font-semibold tracking-tight mb-1.5">
+            Sign in to Morpheus
+          </h1>
+          <p className="text-sm text-text-dim mb-6">
+            Your AI marketing employee. WhatsApp, voice, and web — all in sync.
           </p>
-        )}
 
-        <p className="mt-6 text-[11px] text-white/40 leading-relaxed">
-          Demo mode: any phone signs in instantly. Production will add OTP.
+          <label className="text-xs text-text-dim block mb-1.5 font-medium">
+            Phone number
+          </label>
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            onKeyDown={onKey}
+            placeholder="+919999999999"
+            autoFocus
+            className="w-full bg-bg border border-border rounded-xl px-3.5 py-2.5 mb-4 outline-none focus:border-accent transition text-sm"
+            disabled={busy}
+          />
+
+          <button
+            disabled={busy || !phone.trim() || phone.trim() === "+"}
+            onClick={submit}
+            className="w-full bg-accent hover:bg-accent/90 text-bg rounded-xl py-2.5 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            {busy ? "Signing in…" : "Continue →"}
+          </button>
+
+          {err && (
+            <p className="mt-3 text-xs text-danger bg-danger/10 border border-danger/30 rounded-lg p-2.5 break-all">
+              {err}
+            </p>
+          )}
+        </div>
+
+        <p className="mt-6 text-[11px] text-text-mute text-center">
+          Demo mode: any phone signs in instantly.
         </p>
       </div>
     </main>
