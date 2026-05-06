@@ -1,6 +1,6 @@
 "use client";
 
-import { Send } from "lucide-react";
+import { ArrowUp, Globe, Mic, Plus } from "lucide-react";
 import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { cn } from "@/lib/cn";
 
@@ -29,35 +29,55 @@ export function Composer({
   };
 
   return (
-    <form
-      onSubmit={submit}
-      className="border-t border-border bg-bg-elev/50 backdrop-blur p-3.5"
-    >
-      <div className="flex items-end gap-2 bg-bg border border-border focus-within:border-accent rounded-2xl px-3.5 py-2 transition">
+    <form onSubmit={submit} className="px-5 py-4">
+      <div className="card p-3.5">
         <textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKey}
-          placeholder="Type a message — same as WhatsApp"
+          placeholder="Ask anything — design a poster, draft a caption…"
           rows={1}
           disabled={disabled}
-          className="flex-1 resize-none bg-transparent outline-none text-sm py-1 max-h-32"
+          className="w-full resize-none bg-transparent outline-none text-[15px] py-1 max-h-32 placeholder:text-text-mute"
         />
-        <button
-          type="submit"
-          disabled={disabled || !value.trim()}
-          className={cn(
-            "h-8 w-8 flex items-center justify-center rounded-xl",
-            "bg-accent hover:bg-accent/90 text-bg disabled:opacity-30 disabled:cursor-not-allowed transition",
-          )}
-          aria-label="Send"
-        >
-          <Send size={14} />
-        </button>
+        <div className="flex items-center justify-between mt-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="w-8 h-8 rounded-full border border-border flex items-center justify-center text-text-dim hover:bg-bg transition"
+              aria-label="Attach"
+            >
+              <Plus size={14} />
+            </button>
+            <div className="flex items-center gap-1.5 text-text-mute text-xs px-2 py-1 rounded-full hover:bg-bg cursor-default">
+              <Globe size={12} />
+              Search
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="w-8 h-8 rounded-full border border-border flex items-center justify-center text-text-dim hover:bg-bg transition"
+              aria-label="Voice"
+            >
+              <Mic size={14} />
+            </button>
+            <button
+              type="submit"
+              disabled={disabled || !value.trim()}
+              className={cn(
+                "w-9 h-9 rounded-full flex items-center justify-center transition",
+                disabled || !value.trim()
+                  ? "bg-border-strong text-bg cursor-not-allowed opacity-60"
+                  : "bg-text text-bg hover:bg-text/90",
+              )}
+              aria-label="Send"
+            >
+              <ArrowUp size={16} />
+            </button>
+          </div>
+        </div>
       </div>
-      <p className="text-[10px] text-text-mute mt-2 px-2">
-        Press Enter to send · Shift+Enter for new line
-      </p>
     </form>
   );
 }

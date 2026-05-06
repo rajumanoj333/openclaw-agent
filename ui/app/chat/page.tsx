@@ -108,23 +108,21 @@ export default function ChatPage() {
   );
 
   return (
-    <main className="h-screen flex bg-bg">
+    <main className="h-screen flex">
       {/* SIDEBAR */}
-      <aside className="w-72 hidden md:flex flex-col border-r border-border bg-bg-elev/60 backdrop-blur">
+      <aside className="w-72 hidden md:flex flex-col border-r border-border bg-bg-elev/70 backdrop-blur">
         <div className="p-5 border-b border-border">
-          <div className="flex items-center gap-2.5 mb-3">
-            <div className="w-9 h-9 rounded-xl bg-accent/20 border border-accent/40 flex items-center justify-center">
-              <Sparkles size={18} className="text-accent" />
-            </div>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 blob" />
             <div>
-              <h2 className="font-semibold text-sm leading-tight">
+              <h2 className="font-medium text-[15px] leading-tight text-text">
                 {agent?.name || "Morpheus"}
               </h2>
               <p className="text-[11px] text-text-mute">marketing agent</p>
             </div>
           </div>
-          <p className="text-xs text-text-dim leading-relaxed">
-            {profile?.name || "Loading…"}
+          <p className="text-xs text-text-dim leading-relaxed mt-3">
+            {profile?.name ? `Acting for ${profile.name}` : "Loading…"}
           </p>
           {profile?.brand?.tone && (
             <p className="text-[11px] text-text-mute mt-1">
@@ -161,11 +159,11 @@ export default function ChatPage() {
             <h3 className="text-[10px] uppercase tracking-wider text-text-mute mb-3 font-semibold">
               Capabilities
             </h3>
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1.5">
               {agent.capabilities.map((c) => (
                 <span
                   key={c}
-                  className="text-[10px] bg-accent/10 text-accent border border-accent/30 px-2 py-0.5 rounded-full"
+                  className="text-[11px] bg-bg border border-border px-2.5 py-1 rounded-full text-text-dim"
                 >
                   {c.replace(/_/g, " ")}
                 </span>
@@ -177,7 +175,7 @@ export default function ChatPage() {
         <div className="mt-auto p-5">
           <button
             onClick={logout}
-            className="w-full flex items-center justify-center gap-2 text-xs text-text-mute hover:text-text border border-border hover:border-border-strong rounded-lg py-2 transition"
+            className="w-full flex items-center justify-center gap-2 text-xs text-text-mute hover:text-text border border-border hover:border-border-strong rounded-full py-2 transition"
           >
             <LogOut size={12} />
             Sign out
@@ -188,10 +186,10 @@ export default function ChatPage() {
 
       {/* MAIN */}
       <section className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-bg-elev/40">
+        <header className="flex items-center justify-between px-6 py-4 border-b border-border bg-bg-elev/50 backdrop-blur">
           <div>
-            <h1 className="text-sm font-semibold">{agent?.name || "Morpheus"}</h1>
-            <p className="text-xs text-text-mute">
+            <h1 className="text-base font-medium text-text">{agent?.name || "Morpheus"}</h1>
+            <p className="text-xs text-text-mute mt-0.5">
               {profile?.name ? `Acting for ${profile.name}` : phone}
             </p>
           </div>
@@ -199,7 +197,7 @@ export default function ChatPage() {
         </header>
 
         {activeStatus && (
-          <div className="px-5 py-2 border-b border-border bg-warn/5">
+          <div className="px-6 py-2.5 border-b border-border bg-warn/5">
             <div className="inline-flex items-center gap-2 text-xs text-warn">
               <Activity size={12} className="pulse-dot" />
               <span className="capitalize">
@@ -214,19 +212,14 @@ export default function ChatPage() {
           </div>
         )}
 
-        <section className="flex-1 overflow-y-auto px-5 py-5">
+        <section className="flex-1 overflow-y-auto px-6 py-6">
           {events.length === 0 && !activeStatus && (
             <div className="h-full flex items-center justify-center text-center px-6">
               <div className="max-w-md fade-in">
-                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-accent/15 border border-accent/40 flex items-center justify-center">
-                  <Sparkles size={24} className="text-accent" />
-                </div>
-                <h3 className="text-base font-semibold mb-2">
-                  Hey, I'm {agent?.name || "Morpheus"} 👋
-                </h3>
-                <p className="text-sm text-text-dim leading-relaxed mb-6">
-                  Try sending me a message in any channel. I'll keep WhatsApp,
-                  voice calls, and this web view in sync.
+                <div className="w-32 h-32 mx-auto mb-6 blob" />
+                <p className="text-[15px] text-text-dim leading-relaxed mb-7">
+                  Hey, I'm {agent?.name || "Morpheus"}. Send me a message
+                  here, on WhatsApp, or call — everything syncs in real time.
                 </p>
                 <div className="grid gap-2 text-left">
                   <Suggestion text="make me a poster for diwali sale" />
@@ -278,8 +271,8 @@ function ChannelRow({
 
 function Suggestion({ text }: { text: string }) {
   return (
-    <div className="text-xs text-text-dim bg-panel/60 border border-border rounded-lg px-3 py-2 hover:border-border-strong transition cursor-default">
-      "{text}"
+    <div className="text-[13px] text-text-dim bg-bg-elev border border-border rounded-2xl px-4 py-3 hover:border-border-strong transition cursor-default shadow-soft">
+      {text}
     </div>
   );
 }

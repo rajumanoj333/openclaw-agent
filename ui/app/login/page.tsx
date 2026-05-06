@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Sparkles } from "lucide-react";
 import { api, saveAuth } from "@/lib/api";
 
 export default function LoginPage() {
@@ -31,54 +30,51 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-sm fade-in">
-        <div className="flex items-center justify-center mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-accent/20 border border-accent/40 flex items-center justify-center">
-            <Sparkles className="text-accent" size={22} />
-          </div>
+    <main className="min-h-screen flex flex-col items-center justify-center px-4">
+      <h1 className="text-3xl font-medium tracking-tight text-text mb-12">
+        Morpheus
+      </h1>
+
+      <div className="card w-full max-w-sm p-8 fade-in">
+        <div className="flex justify-center mb-8">
+          <div className="w-24 h-24 blob" />
         </div>
 
-        <div className="bg-panel/70 backdrop-blur border border-border rounded-2xl p-7 shadow-2xl">
-          <h1 className="text-2xl font-semibold tracking-tight mb-1.5">
-            Sign in to Morpheus
-          </h1>
-          <p className="text-sm text-text-dim mb-6">
-            Your AI marketing employee. WhatsApp, voice, and web — all in sync.
-          </p>
-
-          <label className="text-xs text-text-dim block mb-1.5 font-medium">
-            Phone number
-          </label>
-          <input
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            onKeyDown={onKey}
-            placeholder="+919999999999"
-            autoFocus
-            className="w-full bg-bg border border-border rounded-xl px-3.5 py-2.5 mb-4 outline-none focus:border-accent transition text-sm"
-            disabled={busy}
-          />
-
-          <button
-            disabled={busy || !phone.trim() || phone.trim() === "+"}
-            onClick={submit}
-            className="w-full bg-accent hover:bg-accent/90 text-bg rounded-xl py-2.5 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition"
-          >
-            {busy ? "Signing in…" : "Continue →"}
-          </button>
-
-          {err && (
-            <p className="mt-3 text-xs text-danger bg-danger/10 border border-danger/30 rounded-lg p-2.5 break-all">
-              {err}
-            </p>
-          )}
-        </div>
-
-        <p className="mt-6 text-[11px] text-text-mute text-center">
-          Demo mode: any phone signs in instantly.
+        <h2 className="text-base font-medium text-text text-center mb-2">
+          Sign in
+        </h2>
+        <p className="text-sm text-text-dim text-center mb-7 leading-relaxed">
+          Your AI marketing employee. WhatsApp, voice, and web — synced.
         </p>
+
+        <input
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          onKeyDown={onKey}
+          placeholder="+91 9999999999"
+          autoFocus
+          className="w-full bg-bg border border-border rounded-2xl px-4 py-3 mb-3 outline-none focus:border-text/40 transition text-sm"
+          disabled={busy}
+        />
+
+        <button
+          disabled={busy || !phone.trim() || phone.trim() === "+"}
+          onClick={submit}
+          className="btn-primary w-full"
+        >
+          {busy ? "Signing in…" : "Continue →"}
+        </button>
+
+        {err && (
+          <p className="mt-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded-xl p-3 break-all">
+            {err}
+          </p>
+        )}
       </div>
+
+      <p className="mt-6 text-[11px] text-text-mute text-center">
+        Demo mode — any phone signs in instantly
+      </p>
     </main>
   );
 }

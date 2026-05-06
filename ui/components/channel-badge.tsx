@@ -1,11 +1,11 @@
-import { Globe, MessageCircle, Phone, Activity } from "lucide-react";
+import { Activity, Globe, MessageCircle, Phone } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 const TONE: Record<string, string> = {
-  whatsapp: "bg-whatsapp/15 text-whatsapp border-whatsapp/30",
-  voice: "bg-voice/15 text-voice border-voice/30",
-  ui: "bg-ui/15 text-ui border-ui/30",
-  system: "bg-warn/15 text-warn border-warn/30",
+  whatsapp: "bg-whatsapp/10 text-whatsapp",
+  voice: "bg-voice/10 text-voice",
+  ui: "bg-ui/10 text-ui",
+  system: "bg-warn/12 text-warn",
 };
 
 const LABEL: Record<string, string> = {
@@ -26,8 +26,8 @@ export function ChannelBadge({ channel }: { channel: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border font-medium",
-        TONE[channel] || "bg-border/40 text-text-mute border-border",
+        "inline-flex items-center gap-1 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full font-medium",
+        TONE[channel] || "bg-border text-text-mute",
       )}
     >
       {ICON[channel]}
