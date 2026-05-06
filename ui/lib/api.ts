@@ -161,4 +161,12 @@ export const api = {
   getProfile: () => req<BusinessProfileT>("/onboarding/profile"),
 
   getAgent: () => req<AgentCfg>("/onboarding/agent"),
+
+  reset: () =>
+    req<{ ok: boolean; next_step: OnboardingStep }>("/onboarding/reset", {
+      method: "POST",
+    }),
+
+  reprime: () =>
+    req<{ ok: boolean }>("/onboarding/reprime", { method: "POST" }),
 };

@@ -16,7 +16,7 @@ export function ConnectionPill({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-full font-medium",
+        "inline-flex items-center gap-1.5 font-mono text-[10px] uppercase px-2.5 py-1 rounded-full font-medium tracking-[0.16em]",
         s.cls,
       )}
     >

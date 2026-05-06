@@ -57,6 +57,12 @@ def get(phone: str) -> AgentConfig | None:
         return _store.get(phone)
 
 
+def delete(phone: str) -> bool:
+    """Remove the agent config for a phone. Returns True if something was removed."""
+    with _lock:
+        return _store.pop(phone, None) is not None
+
+
 def build_persona_prefix(phone: str, business_name: str | None = None) -> str:
     """
     Build the system-prompt prefix injected before every user message.

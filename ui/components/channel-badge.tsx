@@ -26,7 +26,7 @@ export function ChannelBadge({ channel }: { channel: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full font-medium",
+        "inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.18em] px-2 py-0.5 rounded-full font-medium",
         TONE[channel] || "bg-border text-text-mute",
       )}
     >

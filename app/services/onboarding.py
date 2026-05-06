@@ -4,51 +4,11 @@ business info → save profile → produce a human-readable WhatsApp summary.
 """
 from __future__ import annotations
 
-import json
-import re
-
 from loguru import logger
 
 from app.services import business_profile, scrape
 from app.services.business_profile import BrandKit, BusinessProfile
-from app.services.openclaw import ask_openclaw
-
-
-_EXTRACTION_PROMPT = """You are a business-info extraction agent. \
-The user owns a business and shared a public link. We scraped the page(s) and \
-collected text + brand colors below. Your job: return STRICT JSON ONLY (no prose, \
-no markdown fences) with this exact shape:
-
-{
-  "name": "...",                  // business name, null if unknown
-  "type": "...",                  // restaurant | clinic | salon | retail | service | ...
-  "category": "...",              // free-form sub-category, null if unsure
-  "description": "...",           // 1-2 sentence pitch
-  "city": "...",                  // city name, null if unknown
-  "address": "...",               // full address if present, else null
-  "phone": "...",                 // contact phone in E.164 if possible, else null
-  "email": "...",                 // null if absent
-  "socials": {"instagram": "...", "facebook": "...", "youtube": "..."},
-  "timings": "...",               // e.g. "Mon-Sat 10am-9pm"
-  "services": ["..."],            // up to 8 services / offerings
-  "pricing_note": "...",          // null if no pricing visible
-  "brand": {
-    "primary_color": "#hex",      // pick from brand_colors list, null if unsure
-    "secondary_color": "#hex",
-    "accent_color": "#hex",
-    "tone": "...",                // playful | professional | warm | luxury | ...
-    "visual_style": "...",        // modern | minimal | vibrant | classic | ...
-    "tagline": "..."              // a slogan if found, else null
-  },
-  "confidence": "high"            // high | medium | low — how complete the info is
-}
-
-Rules:
-- Output JSON only, starting with { and ending with }.
-- Use null (not empty string) for fields you cannot fill.
-- Prefer values literally present in the text over guesses.
-- For brand colors, pick from the provided list. Don't invent hex codes.
-"""
+from app.services.llm_extract import extract_profile
 
 
 async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
@@ -89,20 +49,7 @@ async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
             "Try sharing your website URL or business Google Maps link."
         )
 
-    llm_input = (
-        f"{_EXTRACTION_PROMPT}\n\n"
-        f"--- BRAND COLORS FOUND (pick from these) ---\n"
-        f"{', '.join(all_colors[:20]) if all_colors else '(none)'}\n\n"
-        f"--- PAGE CONTENT ---\n{combined_text}"
-    )
-
-    try:
-        raw_reply = await ask_openclaw(llm_input, to=phone, timeout=180)
-    except Exception:
-        logger.exception("onboarding LLM call failed")
-        raw_reply = ""
-
-    parsed = _parse_json(raw_reply)
+    parsed = await extract_profile(url=url, text=combined_text, colors=all_colors)
     profile = _build_profile(
         phone=phone,
         url=url,
@@ -118,39 +65,6 @@ async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────
-
-
-_JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
-
-
-def _parse_json(text: str) -> dict:
-    if not text:
-        return {}
-    # the agent might wrap JSON in markdown fences or prose — extract first {...} block
-    m = _JSON_BLOCK_RE.search(text)
-    if not m:
-        return {}
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        # try to be forgiving: trim trailing prose
-        depth = 0
-        end = -1
-        blob = m.group(0)
-        for i, ch in enumerate(blob):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-        if end > 0:
-            try:
-                return json.loads(blob[:end])
-            except json.JSONDecodeError:
-                pass
-    return {}
 
 
 def _build_profile(

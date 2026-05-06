@@ -77,3 +77,9 @@ def confirm(phone: str) -> bool:
 def all_phones() -> list[str]:
     with _lock:
         return list(_store.keys())
+
+
+def delete(phone: str) -> bool:
+    """Remove the profile for a phone. Returns True if something was removed."""
+    with _lock:
+        return _store.pop(phone, None) is not None

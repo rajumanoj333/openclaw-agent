@@ -31,17 +31,17 @@ export default function BusinessUrlPage() {
     <div className="card p-8 fade-in">
       <StepIndicator active={0} />
 
-      <div className="flex items-center gap-3 mb-2">
-        <div className="w-10 h-10 rounded-2xl bg-bg border border-border flex items-center justify-center">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-11 h-11 rounded-2xl bg-bg border border-border flex items-center justify-center">
           <Globe size={18} className="text-text-dim" />
         </div>
-        <h1 className="text-xl font-medium tracking-tight text-text">
+        <h1 className="font-display italic text-[30px] leading-none tracking-editorial text-ink">
           Tell me about your business
         </h1>
       </div>
-      <p className="text-sm text-text-dim mb-7 leading-relaxed">
+      <p className="text-[14px] text-text-dim mb-7 leading-relaxed">
         Paste your website, Instagram, or Google Maps link. I'll read it and
-        pick out your services, brand colors, logo, and tone.
+        pull out your services, brand colors, logo, and tone.
       </p>
 
       <input

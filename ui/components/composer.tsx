@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Globe, Mic, Plus } from "lucide-react";
+import { ArrowUp } from "lucide-react";
 import { useState, type FormEvent, type KeyboardEvent } from "react";
 import { cn } from "@/lib/cn";
 
@@ -29,55 +29,39 @@ export function Composer({
   };
 
   return (
-    <form onSubmit={submit} className="px-5 py-4">
-      <div className="card p-3.5">
+    <form onSubmit={submit} className="px-6 py-4">
+      <div className="card p-3 flex items-end gap-2">
         <textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKey}
-          placeholder="Ask anything — design a poster, draft a caption…"
+          placeholder="Ask anything — design a poster, draft a caption, run a campaign…"
           rows={1}
           disabled={disabled}
-          className="w-full resize-none bg-transparent outline-none text-[15px] py-1 max-h-32 placeholder:text-text-mute"
+          className="flex-1 resize-none bg-transparent outline-none text-[15px] text-ink py-2 px-2 max-h-32 placeholder:text-text-mute leading-relaxed"
         />
-        <div className="flex items-center justify-between mt-2">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="w-8 h-8 rounded-full border border-border flex items-center justify-center text-text-dim hover:bg-bg transition"
-              aria-label="Attach"
-            >
-              <Plus size={14} />
-            </button>
-            <div className="flex items-center gap-1.5 text-text-mute text-xs px-2 py-1 rounded-full hover:bg-bg cursor-default">
-              <Globe size={12} />
-              Search
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="w-8 h-8 rounded-full border border-border flex items-center justify-center text-text-dim hover:bg-bg transition"
-              aria-label="Voice"
-            >
-              <Mic size={14} />
-            </button>
-            <button
-              type="submit"
-              disabled={disabled || !value.trim()}
-              className={cn(
-                "w-9 h-9 rounded-full flex items-center justify-center transition",
-                disabled || !value.trim()
-                  ? "bg-border-strong text-bg cursor-not-allowed opacity-60"
-                  : "bg-text text-bg hover:bg-text/90",
-              )}
-              aria-label="Send"
-            >
-              <ArrowUp size={16} />
-            </button>
-          </div>
-        </div>
+        <button
+          type="submit"
+          disabled={disabled || !value.trim()}
+          className={cn(
+            "w-10 h-10 rounded-full flex items-center justify-center transition shrink-0",
+            disabled || !value.trim()
+              ? "bg-border text-text-mute cursor-not-allowed"
+              : "shadow-ink hover:opacity-90",
+          )}
+          style={
+            disabled || !value.trim()
+              ? undefined
+              : { background: "hsl(220 30% 8%)", color: "#ffffff" }
+          }
+          aria-label="Send"
+        >
+          <ArrowUp size={16} strokeWidth={2.5} />
+        </button>
       </div>
+      <p className="font-mono text-[10px] text-text-mute mt-2.5 px-2 text-center tracking-wider uppercase">
+        Press Enter to send · Shift + Enter for new line
+      </p>
     </form>
   );
 }

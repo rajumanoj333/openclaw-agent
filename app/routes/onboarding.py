@@ -13,6 +13,7 @@ header issued by /auth/verify.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -20,7 +21,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.routes.auth import verify_jwt
-from app.services import agent_config, business_profile, ws_hub
+from app.services import agent_config, business_profile, openclaw_lock, ws_hub
 from app.services.agent_config import DEFAULT_CAPABILITIES, AgentConfig
 from app.services.business_profile import BrandKit, BusinessProfile
 from app.services.onboarding import run_onboarding
@@ -161,11 +162,16 @@ async def save_agent(req: AgentReq, phone: str = Depends(_phone_from_auth)) -> d
         persona_extra=req.persona_extra.strip(),
     )
     agent_config.put(cfg)
+    # Re-prime needed: scope/persona changed.
+    openclaw_lock.clear_prime(phone)
     logger.info(
         f"onboarding agent saved phone={phone} name={cfg.name!r} caps={cfg.capabilities}"
     )
     ws_hub.fire(phone, channel="system", direction="out", kind="status",
                 status="agent_ready")
+    # Fire-and-forget prime so save returns instantly. If VM is down or
+    # OpenClaw is slow, the chat path falls back to legacy persona prefix.
+    asyncio.create_task(openclaw_lock.prime(phone))
     return {"ok": True, "agent": cfg.to_dict(), "next_step": "ready"}
 
 
@@ -183,3 +189,22 @@ async def get_agent(phone: str = Depends(_phone_from_auth)) -> dict[str, Any]:
     if cfg is None:
         raise HTTPException(404, "no agent config yet")
     return cfg.to_dict()
+
+
+@router.post("/reset")
+async def reset(phone: str = Depends(_phone_from_auth)) -> dict[str, Any]:
+    """Clear profile + agent + prime flag so the user can redo onboarding."""
+    openclaw_lock.reset(phone)
+    logger.info(f"onboarding reset phone={phone}")
+    return {"ok": True, "next_step": "scrape"}
+
+
+@router.post("/reprime")
+async def reprime(phone: str = Depends(_phone_from_auth)) -> dict[str, Any]:
+    """
+    Manually retry priming — useful if the OpenClaw VM was down at agent-save
+    time and the fire-and-forget prime call failed.
+    """
+    openclaw_lock.clear_prime(phone)
+    ok = await openclaw_lock.prime(phone)
+    return {"ok": ok}
