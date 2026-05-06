@@ -36,8 +36,10 @@ export default function ChatPage() {
     status: string;
     body?: string;
   } | null>(null);
+  const [pending, setPending] = useState(false);
   const sockRef = useRef<ChatSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const phone = useMemo(() => getPhone(), []);
   const token = useMemo(() => getToken(), []);
@@ -78,6 +80,14 @@ export default function ChatPage() {
               }
             } else {
               setEvents((cur) => [...cur, ev]);
+              // Any agent reply (direction === "out") clears the pending dots.
+              if (ev.direction === "out") {
+                setPending(false);
+                if (pendingTimerRef.current) {
+                  clearTimeout(pendingTimerRef.current);
+                  pendingTimerRef.current = null;
+                }
+              }
             }
           },
           setState,
@@ -91,7 +101,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [events.length]);
+  }, [events.length, pending]);
 
   if (!phone) return null;
 
@@ -108,6 +118,11 @@ export default function ChatPage() {
       } as ChatEvent,
     ]);
     sockRef.current?.send(body);
+    setPending(true);
+    // Fail-safe: drop the typing indicator after 5min in case WS misses the
+    // reply event (network blip, server restart mid-call, etc).
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
+    pendingTimerRef.current = setTimeout(() => setPending(false), 5 * 60_000);
   };
 
   const logout = () => {
@@ -353,6 +368,7 @@ export default function ChatPage() {
           {events.map((ev, i) => (
             <MessageBubble key={`${ev.ts}-${i}`} ev={ev} />
           ))}
+          {pending && <TypingBubble agentName={agentName} />}
           <div ref={bottomRef} />
         </section>
 
@@ -388,6 +404,27 @@ function ChannelRow({
       <span className="font-mono text-[12px] text-text-mute tabular-nums">
         {String(count).padStart(2, "0")}
       </span>
+    </div>
+  );
+}
+
+function TypingBubble({ agentName }: { agentName: string }) {
+  return (
+    <div className="flex w-full mb-5 justify-start fade-in">
+      <div className="max-w-[72%] flex flex-col gap-1.5 items-start">
+        <div className="flex items-center gap-2 px-1">
+          <span className="font-mono text-[10px] text-text-mute uppercase tracking-[0.18em]">
+            {agentName} is typing
+          </span>
+        </div>
+        <div className="bg-bg-elev border border-border rounded-3xl rounded-bl-md shadow-card px-5 py-3.5">
+          <div className="flex items-center gap-1.5">
+            <span className="typing-dot" />
+            <span className="typing-dot" style={{ animationDelay: "150ms" }} />
+            <span className="typing-dot" style={{ animationDelay: "300ms" }} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

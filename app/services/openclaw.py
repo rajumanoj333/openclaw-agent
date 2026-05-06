@@ -21,19 +21,22 @@ from app.config import settings
 
 
 def _wrap_with_persona(message: str, phone: str | None) -> str:
+    """
+    Wrap a user message with the FULL system prompt (business profile +
+    agent persona + scope + brand kit). Used for un-primed sessions so the
+    agent always has complete context, even if priming hasn't run.
+    """
     if not phone:
         return message
     try:
-        from app.services import agent_config, business_profile
+        from app.services.openclaw_lock import build_system_prompt
     except Exception:
         return message
 
-    business = business_profile.get(phone)
-    biz_name = business.name if business else None
-    prefix = agent_config.build_persona_prefix(phone, business_name=biz_name)
-    if not prefix:
+    system = build_system_prompt(phone)
+    if not system:
         return message
-    return f"{prefix}\n\n--- USER MESSAGE ---\n{message}"
+    return f"{system}\n\n--- USER MESSAGE ---\n{message}"
 
 
 async def ask_openclaw_raw(

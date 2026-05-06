@@ -193,34 +193,91 @@ def _extract_colors(html: str) -> list[str]:
 
 
 def _extract_logo(html: str, base_url: str) -> str | None:
-    """Three strategies in priority order: <img>, <link icon>, og:image."""
+    """
+    Logo detection in priority order. Schema.org Organization.logo is the
+    most reliable signal on big sites — that's the canonical marketing
+    asset. Falls through to <img>, then favicon variants, then og:image
+    (worst — often product/article hero on big-brand pages).
+    """
     soup = BeautifulSoup(html, "lxml")
 
-    # 1. <img> with "logo" in src/alt/class/id
+    # 1. JSON-LD schema.org Organization.logo — most reliable on big sites.
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text() or ""
+        if not raw.strip():
+            continue
+        try:
+            import json
+            blobs = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        # Schema.org allows single object or array; @graph for nested
+        candidates: list = blobs if isinstance(blobs, list) else [blobs]
+        if isinstance(blobs, dict) and isinstance(blobs.get("@graph"), list):
+            candidates = candidates + blobs["@graph"]
+        for c in candidates:
+            if not isinstance(c, dict):
+                continue
+            t = c.get("@type")
+            types = t if isinstance(t, list) else [t] if t else []
+            org_like = any(
+                str(tt).lower() in ("organization", "localbusiness", "corporation",
+                                    "store", "restaurant", "school", "medicalclinic")
+                for tt in types
+            )
+            if not org_like:
+                continue
+            logo = c.get("logo")
+            if isinstance(logo, str) and logo and not logo.startswith("data:"):
+                return urljoin(base_url, logo)
+            if isinstance(logo, dict):
+                url = logo.get("url") or logo.get("contentUrl")
+                if isinstance(url, str) and url and not url.startswith("data:"):
+                    return urljoin(base_url, url)
+
+    # 2. <img> with "logo" in src/alt/class/id
     for img in soup.find_all("img"):
         haystack = " ".join(
             str(img.get(attr, "")) for attr in ("src", "alt", "class", "id")
         ).lower()
         if "logo" in haystack:
-            src = img.get("src")
-            if src:
+            src = img.get("src") or img.get("data-src")
+            if src and not src.startswith("data:"):
                 return urljoin(base_url, src)
 
-    # 2. <link rel="icon"> / apple-touch-icon
+    # 3. apple-touch-icon (usually 180x180, higher quality than favicon).
+    # 4. <link rel="icon"> / mask-icon / shortcut icon
+    # BS parses rel as a list (it's a multi-value HTML attr) so we have to
+    # match by iterating, not via attrs={"rel": "..."} which only matches
+    # exact string equality and silently skips real-world list values.
+    apple_touch: str | None = None
+    plain_icon: str | None = None
     for link in soup.find_all("link"):
-        rel = " ".join(link.get("rel") or []).lower()
-        if "icon" in rel:
-            href = link.get("href")
-            if href:
-                return urljoin(base_url, href)
+        rels = link.get("rel") or []
+        if isinstance(rels, str):
+            rels = [rels]
+        rel_set = {str(r).lower() for r in rels}
+        href = link.get("href")
+        if not href or href.startswith("data:"):
+            continue
+        if "apple-touch-icon" in rel_set or "apple-touch-icon-precomposed" in rel_set:
+            apple_touch = apple_touch or urljoin(base_url, href)
+        elif any("icon" in r for r in rel_set):
+            plain_icon = plain_icon or urljoin(base_url, href)
+    if apple_touch:
+        return apple_touch
+    if plain_icon:
+        return plain_icon
 
-    # 3. og:image / twitter:image
+    # 5. og:image / twitter:image — last resort (often product/article image).
     for prop in ("og:image", "twitter:image"):
         meta = soup.find("meta", attrs={"property": prop}) or soup.find(
             "meta", attrs={"name": prop}
         )
         if meta and meta.get("content"):
-            return urljoin(base_url, meta["content"])
+            content = meta["content"]
+            if not content.startswith("data:"):
+                return urljoin(base_url, content)
 
     return None
 
