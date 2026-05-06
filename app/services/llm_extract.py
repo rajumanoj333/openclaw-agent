@@ -9,6 +9,7 @@ Per-URL cache (sha256, 1h TTL) makes repeat scrapes instant.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -23,8 +24,16 @@ from app.config import settings
 _CACHE_TTL = 60 * 60
 _cache: dict[str, tuple[float, dict]] = {}
 
+# Verified live as of v1beta (gemini-1.5-* dropped — returns 404).
 _PRIMARY_MODEL = "gemini-2.5-flash"
-_FALLBACK_MODELS = ("gemini-2.0-flash", "gemini-1.5-flash")
+_FALLBACK_MODELS = (
+    "gemini-2.5-flash-lite",  # separate quota, cheaper, similar speed
+    "gemini-2.0-flash",        # different quota pool
+    "gemini-flash-latest",     # auto-routed alias to least-loaded flash
+)
+# Retry the primary once on transient 503 before falling through. The "model
+# overloaded" condition typically clears in <1s.
+_RETRY_503_DELAY = 0.8
 
 _EXTRACTION_PROMPT = """You are a business-info extractor. Return STRICT JSON ONLY \
 (no prose, no markdown fences) matching this exact shape:
@@ -129,44 +138,72 @@ async def extract_profile(
 
 
 async def _call_gemini(payload: dict, key: str, *, timeout: float) -> dict:
-    """Try primary model, then fall back through cheaper variants on quota/4xx."""
-    for model in (_PRIMARY_MODEL, *_FALLBACK_MODELS):
-        api_url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent?key={key}"
-        )
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                t0 = time.time()
-                r = await client.post(api_url, json=payload)
-                ms = int((time.time() - t0) * 1000)
-        except Exception as e:
-            logger.warning(f"gemini {model} call failed: {e!r}")
-            continue
+    """
+    Try primary model first (with one retry on transient 503), then fall
+    back through alternates on 4xx / quota. Returns parsed dict or {}.
+    """
+    models_to_try: list[tuple[str, bool]] = [(_PRIMARY_MODEL, True)]  # (name, allow_retry_503)
+    models_to_try.extend((m, False) for m in _FALLBACK_MODELS)
 
-        if r.status_code == 429:
-            logger.warning(f"gemini {model} quota exhausted — falling back")
-            continue
-        if r.status_code >= 400:
-            logger.warning(f"gemini {model} {r.status_code}: {r.text[:200]}")
-            continue
-
-        try:
-            data = r.json()
-            text = (
-                data.get("candidates", [{}])[0]
-                .get("content", {})
-                .get("parts", [{}])[0]
-                .get("text", "")
-            )
-        except Exception as e:
-            logger.warning(f"gemini {model} bad response shape: {e!r}")
-            continue
-
-        logger.info(f"gemini extract ok model={model} ms={ms} chars={len(text)}")
-        return _parse_json(text)
+    for model, allow_retry in models_to_try:
+        for attempt in (1, 2) if allow_retry else (1,):
+            text, ms, status = await _post_once(model, payload, key, timeout=timeout)
+            if status == 200 and text:
+                logger.info(f"gemini extract ok model={model} ms={ms} chars={len(text)}")
+                return _parse_json(text)
+            # 503 overload on primary → retry once
+            if allow_retry and attempt == 1 and status == 503:
+                logger.warning(
+                    f"gemini {model} 503 overloaded — retry in {_RETRY_503_DELAY}s"
+                )
+                await asyncio.sleep(_RETRY_503_DELAY)
+                continue
+            # otherwise stop retrying this model, move to fallback
+            break
 
     return {}
+
+
+async def _post_once(
+    model: str, payload: dict, key: str, *, timeout: float
+) -> tuple[str, int, int]:
+    """Single Gemini call. Returns (text, elapsed_ms, http_status)."""
+    api_url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent?key={key}"
+    )
+    t0 = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            r = await client.post(api_url, json=payload)
+    except Exception as e:
+        ms = int((time.time() - t0) * 1000)
+        logger.warning(f"gemini {model} call failed ms={ms}: {e!r}")
+        return "", ms, 0
+
+    ms = int((time.time() - t0) * 1000)
+
+    if r.status_code == 429:
+        logger.warning(f"gemini {model} 429 quota exhausted — falling back")
+        return "", ms, 429
+    if r.status_code == 503:
+        return "", ms, 503
+    if r.status_code >= 400:
+        logger.warning(f"gemini {model} {r.status_code}: {r.text[:200]}")
+        return "", ms, r.status_code
+
+    try:
+        data = r.json()
+        text = (
+            data.get("candidates", [{}])[0]
+            .get("content", {})
+            .get("parts", [{}])[0]
+            .get("text", "")
+        )
+    except Exception as e:
+        logger.warning(f"gemini {model} bad response shape: {e!r}")
+        return "", ms, 200
+    return text, ms, 200
 
 
 _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
