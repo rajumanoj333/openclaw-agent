@@ -127,7 +127,9 @@ async def extract_profile(
         "generationConfig": {
             "responseMimeType": "application/json",
             "temperature": 0.2,
-            "maxOutputTokens": 1500,
+            # Roomy enough that JSON with multi-sentence description + 8
+            # services + full brand kit never truncates mid-string.
+            "maxOutputTokens": 4096,
         },
     }
 
@@ -149,8 +151,20 @@ async def _call_gemini(payload: dict, key: str, *, timeout: float) -> dict:
         for attempt in (1, 2) if allow_retry else (1,):
             text, ms, status = await _post_once(model, payload, key, timeout=timeout)
             if status == 200 and text:
-                logger.info(f"gemini extract ok model={model} ms={ms} chars={len(text)}")
-                return _parse_json(text)
+                parsed = _parse_json(text)
+                if parsed:
+                    logger.info(
+                        f"gemini extract ok model={model} ms={ms} "
+                        f"chars={len(text)} keys={len(parsed)}"
+                    )
+                    return parsed
+                # Got bytes but couldn't parse — log a snippet so we can see why.
+                logger.warning(
+                    f"gemini {model} returned unparseable JSON "
+                    f"chars={len(text)} head120={text[:120]!r}"
+                )
+                # don't continue retrying same model — try next fallback
+                break
             # 503 overload on primary → retry once
             if allow_retry and attempt == 1 and status == 503:
                 logger.warning(

@@ -106,6 +106,17 @@ async def fetch(url: str) -> ScrapedPage:
             url=norm, source=source, final_url=norm, status=0, text="", raw_html=""
         )
 
+    # Skip aux pages that 404'd — their HTML is just the site's "page not
+    # found" template, which adds noise (nav + footer + CTAs) without
+    # contributing real business info. Some sites (Apple) ship a 2-3kb
+    # 404 page that confuses the LLM extraction.
+    if status >= 400:
+        logger.info(f"scrape skip non-2xx url={norm} status={status}")
+        return ScrapedPage(
+            url=norm, source=source, final_url=final_url, status=status,
+            text="", raw_html="",
+        )
+
     colors = _extract_colors(html)
     logo = _extract_logo(html, base_url=final_url)
     text, title = _clean(html)
@@ -215,17 +226,63 @@ def _extract_logo(html: str, base_url: str) -> str | None:
 
 
 def _clean(html: str) -> tuple[str, str | None]:
-    """Strip scripts/styles/tags, collapse whitespace, return (text, title)."""
+    """
+    Strip scripts/styles/tags, collapse whitespace, return (text, title).
+
+    BEFORE stripping <script type="application/ld+json"> blocks (used by Google
+    for rich snippets — typically Organization / LocalBusiness / Product) and
+    relevant <meta> tags (description, og:*, twitter:*) are extracted and
+    prepended to the cleaned text. These structured signals dramatically
+    improve LLM extraction quality on big brand sites where the visible HTML
+    is mostly product nav.
+    """
     soup = BeautifulSoup(html, "lxml")
     title = (soup.title.string.strip() if soup.title and soup.title.string else None)
+
+    structured: list[str] = []
+
+    # 1. JSON-LD structured data (often has Organization with name, url, sameAs,
+    #    address, contactPoint, founder, foundingDate, logo, description, etc.)
+    for s in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = s.string or s.get_text()
+        if not raw or not raw.strip():
+            continue
+        # cap each JSON-LD blob — some sites ship 50+ KB of breadcrumbs
+        snippet = raw.strip()[:4000]
+        structured.append(f"[JSON-LD]\n{snippet}")
+
+    # 2. Meta description + og: + twitter: (canonical short summary of page)
+    meta_kv: list[str] = []
+    for prop in (
+        "description",
+        "keywords",
+        "og:title",
+        "og:description",
+        "og:site_name",
+        "twitter:title",
+        "twitter:description",
+    ):
+        meta = soup.find("meta", attrs={"name": prop}) or soup.find(
+            "meta", attrs={"property": prop}
+        )
+        if meta and meta.get("content"):
+            meta_kv.append(f"{prop}: {meta['content'].strip()[:600]}")
+    if meta_kv:
+        structured.append("[META]\n" + "\n".join(meta_kv))
 
     for tag in soup(["script", "style", "noscript", "iframe", "svg"]):
         tag.decompose()
 
-    text = soup.get_text(separator=" ")
-    text = re.sub(r"\s+", " ", text).strip()
-    # cap at ~12k chars — LLM context guard
-    return text[:12000], title
+    visible = soup.get_text(separator=" ")
+    visible = re.sub(r"\s+", " ", visible).strip()
+
+    # Prepend the structured block so trim() keeps it in the head.
+    combined = (
+        "\n\n".join(structured) + "\n\n[VISIBLE TEXT]\n" + visible
+        if structured
+        else visible
+    )
+    return combined[:12000], title
 
 
 URL_REGEX = re.compile(

@@ -1,14 +1,66 @@
 """
-Onboarding orchestrator: scrape pages → ask OpenClaw to extract structured
-business info → save profile → produce a human-readable WhatsApp summary.
+Onboarding orchestrator: scrape → extract structured business info → save
+profile → produce a human-readable WhatsApp summary.
+
+Extraction strategy: OpenClaw first (the user's main agent — gpt-5.1-chat
+behind the gateway). On failure, network error, or thin output, fall back
+to Gemini 2.5-flash via `llm_extract`. This way the data quality is
+OpenClaw-grade when the VM is up, but onboarding still completes (with
+Gemini-grade data) when the VM is down or overloaded.
 """
 from __future__ import annotations
+
+import json
+import re
 
 from loguru import logger
 
 from app.services import business_profile, scrape
 from app.services.business_profile import BrandKit, BusinessProfile
 from app.services.llm_extract import extract_profile
+from app.services.openclaw import ask_openclaw_raw
+
+
+_OPENCLAW_EXTRACT_TIMEOUT = 60  # fast-fail: VM down -> fallback in <1s
+_OPENCLAW_PROMPT = """You are a business-info extraction agent. We scraped a \
+public link and collected text + brand colors below. Return STRICT JSON ONLY \
+(no prose, no markdown fences) matching this exact shape:
+
+{
+  "name": "...",
+  "type": "...",
+  "category": "...",
+  "description": "...",
+  "city": "...",
+  "address": "...",
+  "phone": "...",
+  "email": "...",
+  "socials": {"instagram": "...", "facebook": "...", "youtube": "..."},
+  "timings": "...",
+  "services": ["..."],
+  "pricing_note": "...",
+  "brand": {
+    "primary_color": "#hex",
+    "secondary_color": "#hex",
+    "accent_color": "#hex",
+    "tone": "...",
+    "visual_style": "...",
+    "tagline": "..."
+  },
+  "confidence": "high"
+}
+
+Rules:
+- JSON only — start with { and end with }. No prose, no markdown fences.
+- Use null (not empty string) for missing fields.
+- Prefer values literally present in the text over guesses.
+- For brand colors, pick from the provided list. Never invent hex codes.
+- The page text may include [JSON-LD] schema blocks and [META] tags at the
+  top. Use them as additional signals when they describe an Organization,
+  LocalBusiness, or the company itself — but ignore Product/Article schemas
+  (those describe individual products, not the business).
+- "confidence" reflects how complete the extraction is: high | medium | low.
+"""
 
 
 async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
@@ -49,7 +101,20 @@ async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
             "Try sharing your website URL or business Google Maps link."
         )
 
-    parsed = await extract_profile(url=url, text=combined_text, colors=all_colors)
+    # Primary path: OpenClaw (user's main agent — slower but smarter).
+    parsed = await _extract_via_openclaw(combined_text, all_colors)
+    used = "openclaw"
+
+    # Fallback: Gemini 2.5-flash if OpenClaw was unreachable or returned thin.
+    if _is_thin(parsed):
+        logger.info(
+            f"openclaw extraction thin/empty — falling back to gemini for {url}"
+        )
+        parsed = await extract_profile(url=url, text=combined_text, colors=all_colors)
+        used = "gemini"
+
+    logger.info(f"onboarding extraction phone={phone} via={used} keys={list(parsed.keys()) if parsed else 'EMPTY'}")
+
     profile = _build_profile(
         phone=phone,
         url=url,
@@ -65,6 +130,80 @@ async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────
+
+
+_JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
+
+
+async def _extract_via_openclaw(text: str, colors: list[str]) -> dict:
+    """
+    Call OpenClaw with the extraction prompt. Fast-fail on connection error
+    so onboarding doesn't hang when the VM is offline. Returns {} on any
+    failure — caller falls back to Gemini.
+    """
+    if not text.strip():
+        return {}
+    user_block = (
+        "--- BRAND COLORS FOUND (pick from these only) ---\n"
+        f"{', '.join(colors[:20]) if colors else '(none)'}\n\n"
+        "--- PAGE CONTENT ---\n"
+        f"{text}"
+    )
+    payload = f"{_OPENCLAW_PROMPT}\n\n{user_block}"
+    try:
+        raw = await ask_openclaw_raw(payload, to=None, timeout=_OPENCLAW_EXTRACT_TIMEOUT)
+    except Exception as e:
+        logger.warning(f"openclaw extraction failed: {e!r}")
+        return {}
+    return _parse_json(raw)
+
+
+def _is_thin(parsed: dict) -> bool:
+    """True if the parsed profile is missing the basics we need to be useful."""
+    if not parsed:
+        return True
+    name = (parsed.get("name") or "").strip()
+    desc = (parsed.get("description") or "").strip()
+    services = parsed.get("services") or []
+    # Need at least name + (description or services) for a usable profile.
+    if not name:
+        return True
+    if not desc and (not isinstance(services, list) or len(services) == 0):
+        return True
+    return False
+
+
+def _parse_json(text: str) -> dict:
+    if not text:
+        return {}
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    m = _JSON_BLOCK_RE.search(text)
+    if not m:
+        return {}
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        # forgiving: trim trailing prose past the first balanced {...}
+        depth = 0
+        end = -1
+        blob = m.group(0)
+        for i, ch in enumerate(blob):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        if end > 0:
+            try:
+                return json.loads(blob[:end])
+            except json.JSONDecodeError:
+                pass
+    return {}
 
 
 def _build_profile(
