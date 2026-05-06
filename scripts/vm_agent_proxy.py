@@ -28,6 +28,25 @@ OPENCLAW_BIN = os.environ.get("OPENCLAW_BIN", "openclaw")
 DEFAULT_AGENT = os.environ.get("OPENCLAW_AGENT", "main")
 DEFAULT_TIMEOUT = int(os.environ.get("OPENCLAW_TIMEOUT", "120"))
 
+# Per-phone (or per-session) lock map. OpenClaw stores per-session memory in
+# a single JSONL file with a write lock; concurrent CLI calls for the same
+# session collide and one fails with SessionWriteLockTimeoutError. Serialize
+# them at the proxy so callers queue up instead of stomping the lock.
+_session_locks: dict[str, asyncio.Lock] = {}
+
+
+def _session_key(req: "AgentRequest") -> str:
+    """Pick a stable key per logical session — to, session_id, or agent."""
+    return req.session_id or req.to or req.agent or "default"
+
+
+def _get_lock(key: str) -> asyncio.Lock:
+    lock = _session_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _session_locks[key] = lock
+    return lock
+
 
 class AgentRequest(BaseModel):
     # Onboarding prompts can ship 20k+ chars of scraped page text, so we
@@ -117,23 +136,27 @@ async def run_agent(req: AgentRequest):
     if extra not in env.get("PATH", ""):
         env["PATH"] = f"{extra}:{env.get('PATH', '')}"
 
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
-    try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(), timeout=req.timeout + 30
+    # Serialize per session — concurrent calls to the same --to share the
+    # OpenClaw session JSONL and clobber each other's write lock.
+    lock = _get_lock(_session_key(req))
+    async with lock:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise HTTPException(504, "openclaw subprocess timed out")
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(), timeout=req.timeout + 30
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise HTTPException(504, "openclaw subprocess timed out")
 
-    stdout = stdout_b.decode("utf-8", errors="replace")
-    stderr = stderr_b.decode("utf-8", errors="replace")
+        stdout = stdout_b.decode("utf-8", errors="replace")
+        stderr = stderr_b.decode("utf-8", errors="replace")
 
     # CLI writes JSON to stderr when falling back to embedded mode.
     # Search both streams for the response payload.
