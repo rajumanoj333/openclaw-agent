@@ -1,12 +1,10 @@
 """
-Onboarding orchestrator: scrape → extract structured business info → save
-profile → produce a human-readable WhatsApp summary.
+Onboarding orchestrator: scrape → ask OpenClaw to extract structured business
+info → save profile → produce a human-readable WhatsApp summary.
 
-Extraction strategy: OpenClaw first (the user's main agent — gpt-5.1-chat
-behind the gateway). On failure, network error, or thin output, fall back
-to Gemini 2.5-flash via `llm_extract`. This way the data quality is
-OpenClaw-grade when the VM is up, but onboarding still completes (with
-Gemini-grade data) when the VM is down or overloaded.
+OpenClaw is the only extraction path. The VM must be up; on failure we
+return an empty profile so the user sees the failure and can retry / fill
+manually instead of getting silently-wrong data from a second LLM.
 """
 from __future__ import annotations
 
@@ -17,11 +15,13 @@ from loguru import logger
 
 from app.services import business_profile, scrape
 from app.services.business_profile import BrandKit, BusinessProfile
-from app.services.llm_extract import extract_profile
 from app.services.openclaw import ask_openclaw_raw
 
 
-_OPENCLAW_EXTRACT_TIMEOUT = 60  # fast-fail: VM down -> fallback in <1s
+# Long timeout — OpenClaw embedded-fallback can take minutes. Better to
+# wait for correct data than rush and get nulls.
+_OPENCLAW_EXTRACT_TIMEOUT = 300
+
 _OPENCLAW_PROMPT = """You are a business-info extraction agent. We scraped a \
 public link and collected text + brand colors below. Return STRICT JSON ONLY \
 (no prose, no markdown fences) matching this exact shape:
@@ -101,19 +101,11 @@ async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
             "Try sharing your website URL or business Google Maps link."
         )
 
-    # Primary path: OpenClaw (user's main agent — slower but smarter).
     parsed = await _extract_via_openclaw(combined_text, all_colors)
-    used = "openclaw"
-
-    # Fallback: Gemini 2.5-flash if OpenClaw was unreachable or returned thin.
-    if _is_thin(parsed):
-        logger.info(
-            f"openclaw extraction thin/empty — falling back to gemini for {url}"
-        )
-        parsed = await extract_profile(url=url, text=combined_text, colors=all_colors)
-        used = "gemini"
-
-    logger.info(f"onboarding extraction phone={phone} via={used} keys={list(parsed.keys()) if parsed else 'EMPTY'}")
+    logger.info(
+        f"onboarding extraction phone={phone} via=openclaw "
+        f"keys={list(parsed.keys()) if parsed else 'EMPTY'}"
+    )
 
     profile = _build_profile(
         phone=phone,
@@ -137,9 +129,8 @@ _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
 
 async def _extract_via_openclaw(text: str, colors: list[str]) -> dict:
     """
-    Call OpenClaw with the extraction prompt. Fast-fail on connection error
-    so onboarding doesn't hang when the VM is offline. Returns {} on any
-    failure — caller falls back to Gemini.
+    Call OpenClaw with the extraction prompt. Returns {} on failure — user
+    sees an empty profile + banner asking them to retry or fill manually.
     """
     if not text.strip():
         return {}
@@ -156,21 +147,6 @@ async def _extract_via_openclaw(text: str, colors: list[str]) -> dict:
         logger.warning(f"openclaw extraction failed: {e!r}")
         return {}
     return _parse_json(raw)
-
-
-def _is_thin(parsed: dict) -> bool:
-    """True if the parsed profile is missing the basics we need to be useful."""
-    if not parsed:
-        return True
-    name = (parsed.get("name") or "").strip()
-    desc = (parsed.get("description") or "").strip()
-    services = parsed.get("services") or []
-    # Need at least name + (description or services) for a usable profile.
-    if not name:
-        return True
-    if not desc and (not isinstance(services, list) or len(services) == 0):
-        return True
-    return False
 
 
 def _parse_json(text: str) -> dict:
