@@ -47,7 +47,14 @@ def reset(phone: str) -> None:
 
 
 def build_system_prompt(phone: str) -> str:
-    """Compose the locking system prompt from saved profile + agent cfg."""
+    """
+    Compose the locking system prompt. Every field from the saved profile
+    + agent config is shipped so OpenClaw has complete in-and-out knowledge
+    of the business and can answer any question about it directly.
+
+    Layout: identity → full dossier → brand kit → scope → strict behavior
+    rules → extra instructions → acknowledgement.
+    """
     from app.services import agent_config, business_profile
 
     profile = business_profile.get(phone)
@@ -55,42 +62,58 @@ def build_system_prompt(phone: str) -> str:
     if not profile or not cfg:
         return ""
 
-    caps = ", ".join(c.replace("_", " ") for c in cfg.capabilities) or "general assistance"
+    caps_list = "\n".join(f"  • {c.replace('_', ' ')}" for c in cfg.capabilities) \
+        or "  • general marketing assistance"
 
-    parts = [
-        f"You are {cfg.name}, a marketing-focused AI employee for "
-        f"{profile.name or 'the user'}.",
+    biz_name = profile.name or "this business"
+
+    # ─── identity + dossier ──────────────────────────────────────────────
+    parts: list[str] = [
+        f"You are {cfg.name}, the dedicated marketing employee for "
+        f"{biz_name}. You speak AS {biz_name}. You think AS {biz_name}. "
+        f"You serve only {biz_name}.",
         "",
-        "═══ BUSINESS CONTEXT ═══",
+        "═══ BUSINESS DOSSIER (your complete knowledge) ═══",
     ]
+    add = parts.append
     if profile.name:
-        parts.append(f"Name: {profile.name}")
+        add(f"Name: {profile.name}")
     if profile.type:
-        line = profile.type + (f" ({profile.category})" if profile.category else "")
-        parts.append(f"Type: {line}")
+        type_line = profile.type
+        if profile.category:
+            type_line += f" ({profile.category})"
+        add(f"Type: {type_line}")
     if profile.description:
-        parts.append(f"About: {profile.description}")
-    if profile.city or profile.address:
+        add(f"Description: {profile.description}")
+    if profile.address or profile.city:
         loc = ", ".join(x for x in (profile.address, profile.city) if x)
-        parts.append(f"Location: {loc}")
+        add(f"Location: {loc}")
     if profile.timings:
-        parts.append(f"Hours: {profile.timings}")
+        add(f"Hours: {profile.timings}")
     if profile.services:
-        parts.append(f"Services: {', '.join(profile.services)}")
+        add(f"Services / offerings: {', '.join(profile.services)}")
+    if profile.pricing_note:
+        add(f"Pricing notes: {profile.pricing_note}")
     if profile.contact_phone:
-        parts.append(f"Phone: {profile.contact_phone}")
+        add(f"Phone: {profile.contact_phone}")
     if profile.email:
-        parts.append(f"Email: {profile.email}")
+        add(f"Email: {profile.email}")
     if profile.website:
-        parts.append(f"Website: {profile.website}")
+        add(f"Website: {profile.website}")
+    if profile.socials:
+        socials_str = ", ".join(f"{k}={v}" for k, v in profile.socials.items() if v)
+        if socials_str:
+            add(f"Socials: {socials_str}")
 
-    brand_lines: list[str] = []
+    # ─── brand kit ───────────────────────────────────────────────────────
+    add("")
+    add("═══ BRAND KIT (apply to every output) ═══")
     if profile.brand.tagline:
-        brand_lines.append(f"Tagline: {profile.brand.tagline}")
+        add(f"Tagline: {profile.brand.tagline}")
     if profile.brand.tone:
-        brand_lines.append(f"Tone: {profile.brand.tone}")
+        add(f"Tone of voice: {profile.brand.tone}")
     if profile.brand.visual_style:
-        brand_lines.append(f"Visual style: {profile.brand.visual_style}")
+        add(f"Visual style: {profile.brand.visual_style}")
     colors = [
         c
         for c in (
@@ -101,38 +124,69 @@ def build_system_prompt(phone: str) -> str:
         if c
     ]
     if colors:
-        brand_lines.append(f"Brand colors: {', '.join(colors)}")
+        add(f"Brand colors: {', '.join(colors)}")
     if profile.logo_url:
-        brand_lines.append(f"Logo URL: {profile.logo_url}")
+        add(f"Logo URL: {profile.logo_url}  (use this for ALL image-generation prompts)")
+    if profile.brand.logo_description:
+        add(f"Logo description: {profile.brand.logo_description}")
 
-    if brand_lines:
-        parts.append("")
-        parts.append("═══ BRAND KIT ═══")
-        parts.extend(brand_lines)
-
+    # ─── scope ───────────────────────────────────────────────────────────
     parts.extend(
         [
             "",
-            "═══ SCOPE ═══",
-            f"You can ONLY handle: {caps}.",
-            "If a user request falls outside this scope, politely decline and "
-            "suggest the closest in-scope alternative.",
-            "Always respect the brand colors, tone, and visual style above.",
+            "═══ JOB SCOPE ═══",
+            f"You can handle these tasks for {biz_name}:",
+            caps_list,
+        ]
+    )
+
+    # ─── strict behavior rules ───────────────────────────────────────────
+    parts.extend(
+        [
+            "",
+            "═══ STRICT BEHAVIOR RULES ═══",
+            f"1. You ARE {biz_name}. Never break character. Never reveal you "
+            "are a generic LLM.",
+            f"2. Use the exact business name '{biz_name}' in user-facing "
+            "outputs (captions, posts, replies).",
+            "3. Match the brand tone of voice in every word you write. "
+            "Read the Tone field above and write only in that voice.",
+            "4. For posters / image generation tasks: ALWAYS include the "
+            "brand colors above in the design brief, AND include the Logo "
+            "URL as the logo asset to composite onto the image.",
+            f"5. Knowledge boundary: you know the dossier above completely. "
+            f"If asked any question about {biz_name} — services, hours, "
+            "address, pricing, brand — answer directly using the dossier. "
+            "Do NOT decline business-info questions.",
+            "6. Never invent facts not in the dossier. If a field is "
+            "missing and the user asks for it, say 'that's not on file — "
+            "shall I add it?' instead of guessing.",
+            "7. Out-of-scope requests (anything outside the Job Scope list "
+            "above): decline politely in one sentence, then suggest the "
+            "closest in-scope task you CAN do.",
+            "8. Outputs are direct and brand-voiced. No throat-clearing "
+            "phrases like 'Sure!' or 'I'd be happy to'. Get straight to "
+            "the brand-aligned answer.",
+            f"9. When generating captions or posts, include the tagline "
+            f"naturally if one exists" + (
+                f" ('{profile.brand.tagline}')." if profile.brand.tagline else "."
+            ),
+            "10. For multi-step tasks (campaigns, calendars), produce a "
+            "concrete plan with deliverables — not a list of questions.",
         ]
     )
 
     if cfg.persona_extra.strip():
-        parts.extend(
-            ["", "═══ EXTRA INSTRUCTIONS ═══", cfg.persona_extra.strip()]
-        )
+        parts.extend(["", "═══ EXTRA INSTRUCTIONS FROM OWNER ═══", cfg.persona_extra.strip()])
 
     parts.extend(
         [
             "",
-            "═══ ACK ═══",
-            "Reply with one short sentence confirming you understand the brief. "
-            "Do not list back the details. From the next turn on, treat user "
-            "messages as live tasks.",
+            "═══ ACKNOWLEDGEMENT ═══",
+            f"Reply with one short sentence confirming you've absorbed the "
+            f"brief on {biz_name}. From the next turn onward, treat every "
+            "user message as a live task and execute against the dossier "
+            "and brand kit above.",
         ]
     )
     return "\n".join(parts)
