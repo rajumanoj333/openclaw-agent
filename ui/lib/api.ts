@@ -169,4 +169,30 @@ export const api = {
 
   reprime: () =>
     req<{ ok: boolean }>("/onboarding/reprime", { method: "POST" }),
+
+  // ─── Instagram (via Composio) ─────────────────────────────────────────
+  igStatus: () =>
+    req<{
+      connected: boolean;
+      username?: string;
+      name?: string;
+      followers_count?: number;
+      media_count?: number;
+      ig_user_id?: string;
+      error?: string;
+    }>("/instagram/status"),
+
+  igPublish: (imageUrl: string, caption: string) =>
+    req<{ post_id: string; permalink: string | null; ms: number }>(
+      "/instagram/publish",
+      {
+        method: "POST",
+        body: JSON.stringify({ image_url: imageUrl, caption }),
+      },
+    ),
+
+  igRecent: () =>
+    req<{ items: Array<{ id: string; permalink: string; media_url: string; caption?: string; like_count?: number }> }>(
+      "/instagram/recent",
+    ),
 };

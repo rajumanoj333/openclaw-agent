@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     )
 
     composio_api_key: str = ""
+    # Composio entity_id (a.k.a. user_id in v3 API). 'default' is the entity
+    # used when you connected Instagram via the Composio dashboard without
+    # explicitly creating an entity.
+    composio_user_id: str = "default"
 
     @property
     def sarvam_key(self) -> str:

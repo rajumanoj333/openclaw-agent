@@ -1,9 +1,32 @@
+"use client";
+
+import { Instagram, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import type { ChatEvent } from "@/lib/ws";
 import { ChannelBadge } from "./channel-badge";
 
+type PublishState =
+  | { kind: "idle" }
+  | { kind: "publishing" }
+  | { kind: "done"; permalink: string | null }
+  | { kind: "error"; message: string };
+
 export function MessageBubble({ ev }: { ev: ChatEvent }) {
   const isOut = ev.direction === "out";
+  const [publish, setPublish] = useState<PublishState>({ kind: "idle" });
+
+  const onPublish = async () => {
+    if (!ev.media_url) return;
+    setPublish({ kind: "publishing" });
+    try {
+      const r = await api.igPublish(ev.media_url, ev.body || "");
+      setPublish({ kind: "done", permalink: r.permalink });
+    } catch (e) {
+      setPublish({ kind: "error", message: String(e) });
+    }
+  };
 
   return (
     <div
@@ -37,10 +60,7 @@ export function MessageBubble({ ev }: { ev: ChatEvent }) {
           style={
             isOut
               ? undefined
-              : {
-                  background: "hsl(220 30% 8%)",
-                  color: "#ffffff",
-                }
+              : { background: "hsl(220 30% 8%)", color: "#ffffff" }
           }
         >
           {ev.body && (
@@ -54,20 +74,43 @@ export function MessageBubble({ ev }: { ev: ChatEvent }) {
                 alt="media"
                 className="rounded-2xl max-h-80 border border-border"
               />
-              <a
-                href={`/api/img?url=${encodeURIComponent(ev.media_url)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(
-                  "mt-2 font-mono text-[11px] block hover:underline tracking-wider uppercase",
-                  isOut && "text-text-mute",
+              <div className="flex items-center justify-between mt-2 gap-3">
+                <a
+                  href={`/api/img?url=${encodeURIComponent(ev.media_url)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    "font-mono text-[11px] hover:underline tracking-wider uppercase",
+                    isOut && "text-text-mute",
+                  )}
+                  style={
+                    isOut ? undefined : { color: "rgba(255,255,255,0.7)" }
+                  }
+                >
+                  open ↗
+                </a>
+
+                {/* Publish-to-Instagram button — only on agent's poster bubbles */}
+                {isOut && (
+                  <PublishButton state={publish} onClick={onPublish} />
                 )}
-                style={
-                  isOut ? undefined : { color: "rgba(255,255,255,0.7)" }
-                }
-              >
-                open ↗
-              </a>
+              </div>
+
+              {publish.kind === "done" && publish.permalink && (
+                <a
+                  href={publish.permalink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block mt-2 font-mono text-[11px] text-whatsapp hover:underline tracking-wider uppercase"
+                >
+                  posted ↗ {publish.permalink.replace("https://", "")}
+                </a>
+              )}
+              {publish.kind === "error" && (
+                <p className="mt-2 font-mono text-[10px] text-danger break-all">
+                  {publish.message}
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -80,5 +123,39 @@ export function MessageBubble({ ev }: { ev: ChatEvent }) {
         </span>
       </div>
     </div>
+  );
+}
+
+function PublishButton({
+  state,
+  onClick,
+}: {
+  state: PublishState;
+  onClick: () => void;
+}) {
+  if (state.kind === "publishing") {
+    return (
+      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-text-mute">
+        <Loader2 size={12} className="animate-spin" />
+        publishing…
+      </span>
+    );
+  }
+  if (state.kind === "done") {
+    return (
+      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-whatsapp">
+        ✓ posted
+      </span>
+    );
+  }
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-text-mute hover:text-ink transition"
+      style={{ color: "rgba(255,255,255,0.85)" }}
+    >
+      <Instagram size={13} />
+      publish
+    </button>
   );
 }
