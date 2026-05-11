@@ -103,12 +103,12 @@ async def _probe_gemini() -> tuple[str, str]:
     key = settings.gemini_key
     if not key:
         return "down", "GEMINI_API_KEY missing"
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-        "&pageSize=1"
-    )
+    # Use the header form (x-goog-api-key) instead of ?key=<>. URL-form
+    # keys leak into request logs + the exception body if the request
+    # fails — anything that does str(httpx.RequestError) gets the full URL.
+    url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1"
     async with httpx.AsyncClient(timeout=4.0) as client:
-        r = await client.get(url)
+        r = await client.get(url, headers={"x-goog-api-key": key})
     if r.status_code == 401 or r.status_code == 403:
         return "down", f"{r.status_code} — bad key"
     if r.status_code != 200:

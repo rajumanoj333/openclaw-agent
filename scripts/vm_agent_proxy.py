@@ -41,11 +41,10 @@ def _session_key(req: "AgentRequest") -> str:
 
 
 def _get_lock(key: str) -> asyncio.Lock:
-    lock = _session_locks.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _session_locks[key] = lock
-    return lock
+    # dict.setdefault is atomic under the GIL — first caller wins, second
+    # observes the same Lock instance. Naive get-then-set raced when two
+    # concurrent requests for a new phone both observed None.
+    return _session_locks.setdefault(key, asyncio.Lock())
 
 
 class AgentRequest(BaseModel):

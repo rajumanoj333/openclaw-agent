@@ -177,7 +177,19 @@ async def _crop_to_ig_aspect(source_url: str) -> str:
         )
 
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        r = await client.get(source_url)
+        # Browser UA + ngrok-skip header — free ngrok serves an HTML
+        # interstitial on default httpx UA, which Pillow can't open.
+        r = await client.get(
+            source_url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/126.0.0.0 Safari/537.36"
+                ),
+                "ngrok-skip-browser-warning": "1",
+            },
+        )
         r.raise_for_status()
         raw = r.content
 
@@ -298,7 +310,9 @@ async def publish_post(*, image_url: str, caption: str) -> dict[str, Any]:
 
     # Fetch permalink for the live URL. GET_IG_MEDIA is the published-
     # media-only endpoint (per docs); only useful AFTER the container is
-    # published. Falls back to ID-derived URL on failure.
+    # published. Composio sometimes 404s here until Graph API indexes the
+    # new media (~5–60s lag), so we always synthesize a permalink from
+    # the numeric ID as fallback.
     permalink: str | None = None
     try:
         media_env = await _execute(
@@ -309,9 +323,42 @@ async def publish_post(*, image_url: str, caption: str) -> dict[str, Any]:
     except Exception as e:
         logger.warning(f"failed to fetch permalink for {post_id}: {e!r}")
 
+    if not permalink:
+        synth = _media_id_to_shortcode(post_id)
+        if synth:
+            permalink = f"https://www.instagram.com/p/{synth}/"
+            logger.info(f"synthesized permalink post_id={post_id} short={synth}")
+
     ms = int((time.time() - t0) * 1000)
     logger.info(f"instagram post published id={post_id} ms={ms} permalink={permalink}")
     return {"post_id": post_id, "permalink": permalink, "ms": ms}
+
+
+def _media_id_to_shortcode(media_id: str) -> str | None:
+    """
+    Convert an Instagram numeric media ID to the URL shortcode used in
+    permalinks. Graph API returns IDs in the form '<numeric>' or
+    '<numeric>_<owner_id>' — strip the suffix, then base64-encode with
+    Instagram's alphabet (A-Z, a-z, 0-9, '-', '_').
+    """
+    if not media_id:
+        return None
+    base = str(media_id).split("_", 1)[0]
+    if not base.isdigit():
+        return None
+    n = int(base)
+    if n <= 0:
+        return None
+    alphabet = (
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789-_"
+    )
+    short = ""
+    while n > 0:
+        n, rem = divmod(n, 64)
+        short = alphabet[rem] + short
+    return short or None
 
 
 async def recent_posts(limit: int = 12) -> list[dict[str, Any]]:
