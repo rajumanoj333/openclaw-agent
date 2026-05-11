@@ -46,40 +46,73 @@ class InstagramError(RuntimeError):
 
 async def _execute(action: str, params: dict[str, Any]) -> dict[str, Any]:
     """
-    Run a Composio action via v3 tools/execute. Falls back to v2
-    actions/{slug}/execute on 404 (older accounts may still be on v2).
+    Run a Composio action. Tries multiple endpoint shapes:
+      1. v3 /api/v3/tools/{slug}/execute   (current)
+      2. v3 /api/v3/tools/execute          (alt shape with toolSlug in body)
+      3. v1 /api/v1/actions/{slug}/execute (legacy with appName + entityId)
+
+    App-name prefix is the substring before the first underscore of the
+    action slug (e.g. INSTAGRAM_POST_IG_USER_MEDIA → INSTAGRAM).
     """
     api_key = settings.composio_api_key.strip()
     if not api_key:
         raise InstagramError("COMPOSIO_API_KEY missing in .env")
 
     user_id = settings.composio_user_id.strip() or "default"
+    app_name = action.split("_", 1)[0]
     headers = {"x-api-key": api_key, "Content-Type": "application/json"}
 
-    # v3 first
-    v3_url = f"{_COMPOSIO_BASE}/api/v3/tools/execute"
-    v3_body = {"toolSlug": action, "userId": user_id, "arguments": params}
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            r = await client.post(v3_url, json=v3_body, headers=headers)
-            if r.status_code == 200:
-                return r.json()
-            if r.status_code != 404:
-                raise InstagramError(
-                    f"Composio v3 {action} {r.status_code}: {r.text[:300]}"
-                )
-        except httpx.HTTPError as e:
-            logger.warning(f"composio v3 transport error: {e!r} — trying v2")
+    attempts: list[tuple[str, str, dict[str, Any]]] = [
+        # 1. v3 path-style
+        (
+            "v3-path",
+            f"{_COMPOSIO_BASE}/api/v3/tools/{action}/execute",
+            {"user_id": user_id, "arguments": params},
+        ),
+        # 2. v3 body-style
+        (
+            "v3-body",
+            f"{_COMPOSIO_BASE}/api/v3/tools/execute",
+            {"tool_slug": action, "user_id": user_id, "arguments": params},
+        ),
+        # 3. v1 legacy with appName (most install-bases still on this)
+        (
+            "v1",
+            f"{_COMPOSIO_BASE}/api/v1/actions/{action}/execute",
+            {"appName": app_name, "entityId": user_id, "input": params},
+        ),
+        # 4. v2 legacy with appName
+        (
+            "v2",
+            f"{_COMPOSIO_BASE}/api/v2/actions/{action}/execute",
+            {"appName": app_name, "entityId": user_id, "input": params},
+        ),
+    ]
 
-        # v2 fallback
-        v2_url = f"{_COMPOSIO_BASE}/api/v2/actions/{action}/execute"
-        v2_body = {"input": params, "entityId": user_id}
-        r = await client.post(v2_url, json=v2_body, headers=headers)
-        if r.status_code != 200:
-            raise InstagramError(
-                f"Composio v2 {action} {r.status_code}: {r.text[:300]}"
-            )
-        return r.json()
+    last_err = ""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for label, url, body in attempts:
+            try:
+                r = await client.post(url, json=body, headers=headers)
+            except httpx.HTTPError as e:
+                last_err = f"{label} transport: {e!r}"
+                logger.warning(f"composio {label} {action} {last_err}")
+                continue
+            if r.status_code == 200:
+                logger.debug(f"composio {label} {action} ok")
+                return r.json()
+            if r.status_code == 404:
+                # path/version missing — try next
+                last_err = f"{label} 404"
+                continue
+            # Other 4xx/5xx: surface but still try fallback in case it's a
+            # version-specific schema mismatch
+            last_err = f"{label} {r.status_code}: {r.text[:200]}"
+            logger.warning(f"composio {action} {last_err}")
+
+    raise InstagramError(
+        f"All Composio endpoints failed for {action}. Last: {last_err}"
+    )
 
 
 def _unwrap_data(envelope: dict[str, Any]) -> dict[str, Any]:
