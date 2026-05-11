@@ -18,11 +18,11 @@ router = APIRouter(prefix="/instagram", tags=["instagram"])
 
 
 def auth_phone(authorization: str = Header(...)) -> str:
+    """JWT bearer auth. verify_jwt() returns the phone string directly."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "missing bearer token")
     token = authorization.removeprefix("Bearer ").strip()
-    payload = verify_jwt(token)
-    phone = payload.get("phone") if isinstance(payload, dict) else None
+    phone = verify_jwt(token)  # raises HTTPException(401) on bad token
     if not phone:
         raise HTTPException(401, "invalid token")
     return phone
