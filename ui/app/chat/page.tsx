@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "@/components/composer";
 import { ConnectionPill } from "@/components/connection-pill";
 import { MessageBubble } from "@/components/message-bubble";
+import { SystemStatus } from "@/components/system-status";
 import {
   api,
   clearAuth,
@@ -271,6 +272,8 @@ export default function ChatPage() {
             </div>
           </div>
         )}
+
+        <SystemStatus phone={phone} />
 
         <div className="mt-auto p-7 space-y-2">
           <button

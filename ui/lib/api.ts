@@ -195,4 +195,16 @@ export const api = {
     req<{ items: Array<{ id: string; permalink: string; media_url: string; caption?: string; like_count?: number }> }>(
       "/instagram/recent",
     ),
+
+  // ─── System health ──────────────────────────────────────────────────
+  systemStatus: (phone?: string) =>
+    req<{
+      overall: "ok" | "warn" | "down";
+      services: Array<{
+        name: string;
+        status: "ok" | "warn" | "down";
+        latency_ms: number;
+        detail: string;
+      }>;
+    }>(`/system/status${phone ? `?phone=${encodeURIComponent(phone)}` : ""}`),
 };

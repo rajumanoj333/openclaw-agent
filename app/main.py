@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.config import settings
-from app.routes import audio, auth, instagram, onboarding, voice, whatsapp, ws
+from app.routes import audio, auth, instagram, onboarding, system, voice, whatsapp, ws
 from app.services import voice_prompts
 
 app = FastAPI(title="OpenClaw Twilio Agent", version="0.1.0")
@@ -24,6 +24,7 @@ app.include_router(audio.router)
 app.include_router(auth.router)
 app.include_router(onboarding.router)
 app.include_router(instagram.router)
+app.include_router(system.router)
 app.include_router(ws.router)
 
 
