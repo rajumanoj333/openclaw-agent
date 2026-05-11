@@ -135,7 +135,7 @@ function PublishButton({
 }) {
   if (state.kind === "publishing") {
     return (
-      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-text-mute">
+      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-text-mute border border-border rounded-full px-2.5 py-1">
         <Loader2 size={12} className="animate-spin" />
         publishing…
       </span>
@@ -143,7 +143,7 @@ function PublishButton({
   }
   if (state.kind === "done") {
     return (
-      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-whatsapp">
+      <span className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-whatsapp border border-whatsapp/30 bg-whatsapp/5 rounded-full px-2.5 py-1">
         ✓ posted
       </span>
     );
@@ -151,11 +151,11 @@ function PublishButton({
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider text-text-mute hover:text-ink transition"
-      style={{ color: "rgba(255,255,255,0.85)" }}
+      className="inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider border border-ink/15 hover:border-ink/40 hover:bg-ink/5 transition rounded-full px-2.5 py-1"
+      style={{ color: "hsl(220 30% 8%)" }}
     >
       <Instagram size={13} />
-      publish
+      publish to instagram
     </button>
   );
 }
