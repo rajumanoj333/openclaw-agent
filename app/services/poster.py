@@ -235,31 +235,63 @@ async def _pollinations(prompt: str) -> tuple[bytes, str]:
     Free image generation via https://image.pollinations.ai/prompt/<text>
     No auth, no quota, returns JPEG.
 
-    Model = `flux` — better fidelity + typography vs default `turbo`.
-    Slower (~10-25s) but readable headlines + brand colors.
+    Reliability quirks observed in prod:
+      - Long URL-encoded prompts (>~1.5kb) regularly 500.
+      - Smart quotes / em-dash / non-breaking hyphens cause 500s.
+      - `turbo` model is more available than `flux` when servers are hot.
+    Strategy: aggressively flatten + ASCII-fold + cap to 500 chars, retry
+    twice with shorter prompts and alternate models before giving up.
     """
+    import asyncio
     import re
+    import unicodedata
 
     import httpx
     from urllib.parse import quote
 
-    # Flatten newlines (Pollinations 404s on multi-line URLs) but keep
-    # comma+sentence structure so the model still parses sections.
-    flat = re.sub(r"\s+", " ", prompt).strip()[:1500]
+    # ASCII-fold smart punctuation that Pollinations rejects.
+    def _flatten(p: str, max_chars: int) -> str:
+        p = unicodedata.normalize("NFKD", p)
+        p = p.encode("ascii", "ignore").decode("ascii")
+        p = re.sub(r"\s+", " ", p).strip()
+        return p[:max_chars]
 
-    model = "flux"
-    url = (
-        f"https://image.pollinations.ai/prompt/{quote(flat)}"
-        f"?width=768&height=1280&nologo=true&model={model}&enhance=true"
-    )
-    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-    logger.info(
-        f"pollinations image bytes={len(resp.content)} model={model} "
-        f"prompt_chars={len(flat)}"
-    )
-    return resp.content, "image/jpeg"
+    # Try shorter + alternate model on each retry — Pollinations free tier
+    # rate-limits per-prompt-hash, so a different prompt beats infinite retry.
+    attempts = [
+        ("flux", 500),
+        ("flux", 320),
+        ("turbo", 320),
+    ]
+
+    last_err: str = ""
+    for model, cap in attempts:
+        flat = _flatten(prompt, cap)
+        url = (
+            f"https://image.pollinations.ai/prompt/{quote(flat)}"
+            f"?width=768&height=1280&nologo=true&model={model}"
+        )
+        try:
+            async with httpx.AsyncClient(
+                timeout=120.0, follow_redirects=True
+            ) as client:
+                resp = await client.get(url)
+            if resp.status_code == 200 and resp.content:
+                logger.info(
+                    f"pollinations ok model={model} bytes={len(resp.content)} "
+                    f"prompt_chars={len(flat)}"
+                )
+                return resp.content, "image/jpeg"
+            last_err = f"{resp.status_code} ({len(resp.content)}b)"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+        logger.warning(
+            f"pollinations failed model={model} cap={cap} err={last_err} — "
+            "trying next"
+        )
+        await asyncio.sleep(1.5)
+
+    raise RuntimeError(f"all pollinations attempts failed: {last_err}")
 
 
 async def _gemini_generate(prompt: str, model: str | None = None) -> tuple[bytes, str]:
