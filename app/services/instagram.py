@@ -243,13 +243,18 @@ async def publish_post(*, image_url: str, caption: str) -> dict[str, Any]:
         logger.warning(f"ig crop failed: {e!r} — using original url")
         publish_url = image_url
 
-    # 1. create container
+    # 1. create container. Composio v2 still exposes the "deprecated"
+    # INSTAGRAM_CREATE_MEDIA_CONTAINER slug — the docs claim
+    # POST_IG_USER_MEDIA replaces it, but Composio's tool registry on
+    # this account returns "Tool not found" for the new slug. Use the
+    # legacy slug which is still wired to Graph API server-side.
     container_env = await _execute(
-        "INSTAGRAM_POST_IG_USER_MEDIA",
+        "INSTAGRAM_CREATE_MEDIA_CONTAINER",
         {
             "ig_user_id": ig_id,
             "image_url": publish_url,
-            "caption": caption[:2200],  # Instagram caption cap
+            "caption": caption[:2200],
+            "content_type": "photo",
         },
     )
     container = _unwrap_data(container_env)
@@ -260,12 +265,12 @@ async def publish_post(*, image_url: str, caption: str) -> dict[str, Any]:
         )
     logger.info(f"instagram container created id={creation_id}")
 
-    # 2. poll status
+    # 2. poll status via legacy GET_POST_STATUS (also still wired).
     for attempt in range(20):
         await asyncio.sleep(3)
         status_env = await _execute(
-            "INSTAGRAM_GET_IG_MEDIA",
-            {"ig_media_id": creation_id, "fields": "status_code"},
+            "INSTAGRAM_GET_POST_STATUS",
+            {"creation_id": creation_id},
         )
         status_data = _unwrap_data(status_env)
         code = str(status_data.get("status_code") or "").upper()
@@ -281,9 +286,9 @@ async def publish_post(*, image_url: str, caption: str) -> dict[str, Any]:
             f"container {creation_id} did not reach FINISHED within 60s"
         )
 
-    # 3. publish
+    # 3. publish via legacy CREATE_POST.
     publish_env = await _execute(
-        "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
+        "INSTAGRAM_CREATE_POST",
         {"ig_user_id": ig_id, "creation_id": creation_id},
     )
     published = _unwrap_data(publish_env)
@@ -291,7 +296,9 @@ async def publish_post(*, image_url: str, caption: str) -> dict[str, Any]:
     if not post_id:
         raise InstagramError(f"publish returned no id: {published}")
 
-    # Fetch permalink for the live URL
+    # Fetch permalink for the live URL. GET_IG_MEDIA is the published-
+    # media-only endpoint (per docs); only useful AFTER the container is
+    # published. Falls back to ID-derived URL on failure.
     permalink: str | None = None
     try:
         media_env = await _execute(
