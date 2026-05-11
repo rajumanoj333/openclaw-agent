@@ -17,6 +17,7 @@ Image URL must be a direct public HTTPS link to JPG/PNG (320–1440px wide,
 from __future__ import annotations
 
 import asyncio
+import io
 import time
 from typing import Any
 
@@ -27,6 +28,11 @@ from app.config import settings
 
 
 _COMPOSIO_BASE = "https://backend.composio.dev"
+
+# Meta requires aspect ratio between 4:5 (0.8) and 1.91:1 for feed posts.
+# Posters here are generated 9:16 (~0.56) which fails. Center-crop to 4:5
+# before publishing.
+_IG_TARGET_ASPECT = 4 / 5  # 0.8 — Meta's narrowest feed-supported ratio
 
 # Cached Instagram Business Account ID — fetched once via GET_USER_INFO and
 # reused for subsequent publishes. Avoids the user having to paste the
@@ -118,6 +124,56 @@ async def _ig_user_id() -> str:
     return ig_id
 
 
+async def _crop_to_ig_aspect(source_url: str) -> str:
+    """
+    Fetch poster from `source_url`, center-crop to 4:5 if it's taller, save
+    a new copy to audio_store, and return its public URL. Meta rejects
+    images outside 4:5–1.91:1 aspect range, and our posters are 9:16.
+
+    If the image already meets Meta's requirements, returns the original URL
+    unchanged (no I/O wasted).
+    """
+    # Lazy imports — keep instagram module light at boot
+    from PIL import Image
+    from app.services.audio_store import save as save_audio
+
+    base = settings.public_base_url.rstrip("/")
+    if not base:
+        raise InstagramError(
+            "PUBLIC_BASE_URL not set — cannot host cropped image for Meta"
+        )
+
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        r = await client.get(source_url)
+        r.raise_for_status()
+        raw = r.content
+
+    def _crop() -> bytes:
+        img = Image.open(io.BytesIO(raw)).convert("RGB")
+        w, h = img.size
+        aspect = w / h
+        # Already wide enough? Skip crop.
+        if aspect >= _IG_TARGET_ASPECT:
+            out = io.BytesIO()
+            img.save(out, format="JPEG", quality=92, optimize=True)
+            return out.getvalue()
+        # Taller than 4:5 → crop height. New height = width / 0.8 = width * 1.25
+        new_h = int(w / _IG_TARGET_ASPECT)
+        top = max(0, (h - new_h) // 2)
+        cropped = img.crop((0, top, w, top + new_h))
+        out = io.BytesIO()
+        cropped.save(out, format="JPEG", quality=92, optimize=True)
+        return out.getvalue()
+
+    jpeg = await asyncio.to_thread(_crop)
+    name = save_audio(jpeg, "jpg")  # auto-uuid filename, returns name
+    public_url = f"{base}/audio/{name}"
+    logger.info(
+        f"instagram crop saved name={name} bytes={len(jpeg)} url={public_url}"
+    )
+    return public_url
+
+
 async def publish_post(*, image_url: str, caption: str) -> dict[str, Any]:
     """
     Full create → poll → publish flow. Returns {post_id, permalink, ms}.
@@ -143,12 +199,23 @@ async def publish_post(*, image_url: str, caption: str) -> dict[str, Any]:
     t0 = time.time()
     ig_id = await _ig_user_id()
 
+    # 0. Crop to IG-compliant aspect (4:5 minimum). Posters are 9:16 source.
+    try:
+        publish_url = await _crop_to_ig_aspect(image_url)
+    except InstagramError:
+        raise
+    except Exception as e:
+        # Crop failed (network, Pillow, audio_store) → try original anyway,
+        # Meta might accept if it's already wide enough.
+        logger.warning(f"ig crop failed: {e!r} — using original url")
+        publish_url = image_url
+
     # 1. create container
     container_env = await _execute(
         "INSTAGRAM_POST_IG_USER_MEDIA",
         {
             "ig_user_id": ig_id,
-            "image_url": image_url,
+            "image_url": publish_url,
             "caption": caption[:2200],  # Instagram caption cap
         },
     )
