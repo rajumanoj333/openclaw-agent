@@ -2,7 +2,7 @@
 
 import { ArrowRight, Globe, MessageCircle, Phone } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, saveAuth } from "@/lib/api";
 
 export default function LoginPage() {
@@ -10,6 +10,22 @@ export default function LoginPage() {
   const [phone, setPhone] = useState("+91");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [waNumber, setWaNumber] = useState<string | null>(null);
+  const [voiceNumber, setVoiceNumber] = useState<string | null>(null);
+  const [demoMode, setDemoMode] = useState(true);
+
+  useEffect(() => {
+    api
+      .channels()
+      .then((c) => {
+        setWaNumber(c.whatsapp);
+        setVoiceNumber(c.voice);
+        setDemoMode(c.demo_mode);
+      })
+      .catch(() => {
+        /* non-fatal — fallback to generic copy */
+      });
+  }, []);
 
   const submit = async () => {
     if (!phone.trim() || phone.trim() === "+") return;
@@ -31,8 +47,8 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-4">
-      <div className="text-center mb-10 rise">
+    <main className="min-h-screen flex flex-col items-center justify-center px-4 py-10">
+      <div className="text-center mb-8 rise">
         <p className="rule mb-5 max-w-[140px] mx-auto">
           <span>est. 2026</span>
         </p>
@@ -44,58 +60,91 @@ export default function LoginPage() {
         </p>
       </div>
 
-      <div className="card w-full max-w-sm p-8 fade-in">
-        <div className="flex justify-center mb-7 relative">
-          <div className="w-28 h-28 blob" />
+      <div className="card w-full max-w-md p-8 fade-in">
+        <div className="flex justify-center mb-6 relative">
+          <div className="w-24 h-24 blob" />
           <span
             aria-hidden
-            className="absolute inset-0 flex items-center justify-center font-display italic text-[44px] text-ink/85 tracking-editorial"
+            className="absolute inset-0 flex items-center justify-center font-display italic text-[40px] text-ink/85 tracking-editorial"
           >
             M
           </span>
         </div>
 
         <h2 className="font-display italic text-[26px] leading-none text-ink text-center tracking-editorial mb-2">
-          Sign in
+          Your phone is the routing key
         </h2>
-        <p className="text-[14px] text-text-dim text-center mb-5 leading-relaxed">
-          One number. Three channels. Same conversation.
+        <p className="text-[13px] text-text-dim text-center mb-6 leading-relaxed">
+          One number identifies your business across every channel. WhatsApp,
+          voice call, and this web chat all hit the same agent.
         </p>
 
-        {/* Why we need your phone — three icons + one-liners */}
-        <ul className="space-y-2 mb-6 text-[12px] text-text-dim">
-          <li className="flex items-start gap-2.5">
-            <MessageCircle size={14} className="text-whatsapp mt-0.5 flex-shrink-0" />
-            <span>
-              <b className="text-ink">WhatsApp</b> — text the agent from any
-              device on this number.
+        {/* Routing explanation — three rows, each shows the inbound point */}
+        <ul className="space-y-3 mb-7 text-[13px] text-text-dim">
+          <li className="flex items-start gap-3">
+            <span className="mt-0.5 w-8 h-8 rounded-full bg-whatsapp/10 flex items-center justify-center flex-shrink-0">
+              <MessageCircle size={15} className="text-whatsapp" />
             </span>
+            <div className="min-w-0">
+              <p>
+                <b className="text-ink">WhatsApp</b> — send messages or voice
+                notes to{" "}
+                <span className="font-mono text-ink text-[12px]">
+                  {waNumber ?? "the Twilio number"}
+                </span>
+                . Agent replies on the same thread.
+              </p>
+            </div>
           </li>
-          <li className="flex items-start gap-2.5">
-            <Phone size={14} className="text-voice mt-0.5 flex-shrink-0" />
-            <span>
-              <b className="text-ink">Voice</b> — call the Twilio line, speak
-              in English or Telugu, hear a reply.
+          <li className="flex items-start gap-3">
+            <span className="mt-0.5 w-8 h-8 rounded-full bg-voice/10 flex items-center justify-center flex-shrink-0">
+              <Phone size={15} className="text-voice" />
             </span>
+            <div className="min-w-0">
+              <p>
+                <b className="text-ink">Voice</b> — call{" "}
+                <span className="font-mono text-ink text-[12px]">
+                  {voiceNumber ?? "the Twilio voice line"}
+                </span>{" "}
+                · speak English or Telugu · hear the reply, also gets sent on
+                WhatsApp.
+              </p>
+            </div>
           </li>
-          <li className="flex items-start gap-2.5">
-            <Globe size={14} className="text-ui mt-0.5 flex-shrink-0" />
-            <span>
-              <b className="text-ink">Web</b> — this chat. Every message from
-              every channel lands here in real time.
+          <li className="flex items-start gap-3">
+            <span className="mt-0.5 w-8 h-8 rounded-full bg-ui/10 flex items-center justify-center flex-shrink-0">
+              <Globe size={15} className="text-ui" />
             </span>
+            <div className="min-w-0">
+              <p>
+                <b className="text-ink">Web chat</b> — this screen. Every
+                message from every channel lands here in real time. Send from
+                here too.
+              </p>
+            </div>
           </li>
         </ul>
 
+        <label
+          htmlFor="phone-input"
+          className="block font-mono text-[10px] uppercase tracking-[0.18em] text-text-mute mb-1.5"
+        >
+          Your phone number
+        </label>
         <input
+          id="phone-input"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           onKeyDown={onKey}
           placeholder="+91 9999999999"
           autoFocus
-          className="w-full bg-bg border border-border rounded-2xl px-4 py-3 mb-3 outline-none focus:border-ink/40 transition text-[15px] text-ink placeholder:text-text-mute font-mono"
+          className="w-full bg-bg border border-border rounded-2xl px-4 py-3 mb-2 outline-none focus:border-ink/40 transition text-[15px] text-ink placeholder:text-text-mute font-mono"
           disabled={busy}
         />
+        <p className="text-[11px] text-text-mute mb-4 leading-relaxed">
+          Use the same number you'll text or call from. The agent finds your
+          business by this number on every channel.
+        </p>
 
         <button
           disabled={busy || !phone.trim() || phone.trim() === "+"}
@@ -113,8 +162,10 @@ export default function LoginPage() {
         )}
       </div>
 
-      <p className="mt-7 font-mono text-[11px] text-text-mute text-center uppercase tracking-[0.18em]">
-        Demo mode — any phone signs in instantly
+      <p className="mt-6 font-mono text-[11px] text-text-mute text-center uppercase tracking-[0.18em]">
+        {demoMode
+          ? "Demo mode — any phone signs in instantly. No OTP."
+          : "Production — OTP verification required."}
       </p>
     </main>
   );

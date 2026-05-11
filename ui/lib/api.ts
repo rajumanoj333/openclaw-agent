@@ -207,4 +207,9 @@ export const api = {
         detail: string;
       }>;
     }>(`/system/status${phone ? `?phone=${encodeURIComponent(phone)}` : ""}`),
+
+  channels: () =>
+    req<{ whatsapp: string | null; voice: string | null; demo_mode: boolean }>(
+      "/system/channels",
+    ),
 };

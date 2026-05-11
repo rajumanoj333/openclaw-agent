@@ -38,8 +38,19 @@ export default function ChatPage() {
     body?: string;
   } | null>(null);
   const [pending, setPending] = useState(false);
+  const [channels, setChannels] = useState<{
+    whatsapp: string | null;
+    voice: string | null;
+  } | null>(null);
   const sockRef = useRef<ChatSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    api
+      .channels()
+      .then((c) => setChannels({ whatsapp: c.whatsapp, voice: c.voice }))
+      .catch(() => {});
+  }, []);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const phone = useMemo(() => getPhone(), []);
@@ -243,18 +254,21 @@ export default function ChatPage() {
             label="WhatsApp"
             count={counts.whatsapp || 0}
             color="whatsapp"
+            target={channels?.whatsapp}
           />
           <ChannelRow
             icon={<Phone size={14} />}
             label="Voice"
             count={counts.voice || 0}
             color="voice"
+            target={channels?.voice}
           />
           <ChannelRow
             icon={<Globe size={14} />}
             label="Web"
             count={counts.ui || 0}
             color="ui"
+            target="this chat"
           />
         </div>
 
@@ -386,11 +400,13 @@ function ChannelRow({
   label,
   count,
   color,
+  target,
 }: {
   icon: React.ReactNode;
   label: string;
   count: number;
   color: "whatsapp" | "voice" | "ui";
+  target?: string | null;
 }) {
   const dot = {
     whatsapp: "bg-whatsapp",
@@ -398,15 +414,22 @@ function ChannelRow({
     ui: "bg-ui",
   }[color];
   return (
-    <div className="flex items-center justify-between py-2 group">
-      <div className="flex items-center gap-3 text-[14px] text-text-dim group-hover:text-text transition-colors">
-        <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
-        <span className="text-text-mute">{icon}</span>
-        {label}
+    <div className="py-2 group">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 text-[14px] text-text-dim group-hover:text-text transition-colors">
+          <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+          <span className="text-text-mute">{icon}</span>
+          {label}
+        </div>
+        <span className="font-mono text-[12px] text-text-mute tabular-nums">
+          {String(count).padStart(2, "0")}
+        </span>
       </div>
-      <span className="font-mono text-[12px] text-text-mute tabular-nums">
-        {String(count).padStart(2, "0")}
-      </span>
+      {target && (
+        <p className="ml-6 mt-0.5 font-mono text-[10px] text-text-mute truncate">
+          → {target}
+        </p>
+      )}
     </div>
   );
 }
