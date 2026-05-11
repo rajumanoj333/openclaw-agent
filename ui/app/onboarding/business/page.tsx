@@ -39,10 +39,19 @@ export default function BusinessUrlPage() {
           Tell me about your business
         </h1>
       </div>
-      <p className="text-[14px] text-text-dim mb-7 leading-relaxed">
+      <p className="text-[14px] text-text-dim mb-5 leading-relaxed">
         Paste your website, Instagram, or Google Maps link. I'll read it and
         pull out your services, brand colors, logo, and tone.
       </p>
+
+      {/* What gets scraped — quick explainer so users know what to expect */}
+      <ul className="text-[12px] text-text-mute space-y-1.5 mb-7 px-4 py-3 bg-bg border border-border rounded-2xl">
+        <li>· <b className="text-text-dim">Homepage</b> · /about · /contact</li>
+        <li>· <b className="text-text-dim">JSON-LD schema</b> if present (best signal)</li>
+        <li>· <b className="text-text-dim">og:* meta tags</b> for description + image</li>
+        <li>· <b className="text-text-dim">CSS palette</b> for brand colors</li>
+        <li>· <b className="text-text-dim">Logo</b> via favicon, apple-touch-icon, or schema.org</li>
+      </ul>
 
       <input
         value={url}

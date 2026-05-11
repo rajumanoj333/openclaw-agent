@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Globe, MessageCircle, Phone } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, saveAuth } from "@/lib/api";
@@ -58,9 +58,34 @@ export default function LoginPage() {
         <h2 className="font-display italic text-[26px] leading-none text-ink text-center tracking-editorial mb-2">
           Sign in
         </h2>
-        <p className="text-[14px] text-text-dim text-center mb-7 leading-relaxed">
-          One thread. WhatsApp, voice, and web — synced.
+        <p className="text-[14px] text-text-dim text-center mb-5 leading-relaxed">
+          One number. Three channels. Same conversation.
         </p>
+
+        {/* Why we need your phone — three icons + one-liners */}
+        <ul className="space-y-2 mb-6 text-[12px] text-text-dim">
+          <li className="flex items-start gap-2.5">
+            <MessageCircle size={14} className="text-whatsapp mt-0.5 flex-shrink-0" />
+            <span>
+              <b className="text-ink">WhatsApp</b> — text the agent from any
+              device on this number.
+            </span>
+          </li>
+          <li className="flex items-start gap-2.5">
+            <Phone size={14} className="text-voice mt-0.5 flex-shrink-0" />
+            <span>
+              <b className="text-ink">Voice</b> — call the Twilio line, speak
+              in English or Telugu, hear a reply.
+            </span>
+          </li>
+          <li className="flex items-start gap-2.5">
+            <Globe size={14} className="text-ui mt-0.5 flex-shrink-0" />
+            <span>
+              <b className="text-ink">Web</b> — this chat. Every message from
+              every channel lands here in real time.
+            </span>
+          </li>
+        </ul>
 
         <input
           value={phone}

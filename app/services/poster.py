@@ -160,74 +160,180 @@ async def generate_poster(
         logger.info("poster engine=pollinations model=flux (fallback)")
         image, mime = await _pollinations(prompt)
 
-    if profile and profile.logo_url:
-        try:
-            image, mime = await _overlay_logo(image, mime or "image/jpeg", profile.logo_url)
-        except Exception:
-            logger.exception("logo overlay failed; returning poster without logo")
-
-    return image, mime or "image/jpeg"
-
-    if profile and profile.logo_url:
-        try:
-            image, mime = await _overlay_logo(image, mime, profile.logo_url)
-        except Exception:
-            logger.exception("logo overlay failed; returning poster without logo")
-
+    # Brand presence is non-negotiable per design: every poster carries
+    # the business mark, even when the upstream logo URL is unreachable.
+    # 1) Try real logo composite. 2) Fall back to a typographic wordmark
+    # drawn from the business name. Either way, the bare AI image never
+    # ships without a branded badge.
+    biz_name = (profile.name if profile else None) or ""
+    image, mime = await _apply_brand_badge(
+        image, mime or "image/jpeg",
+        logo_url=profile.logo_url if profile else None,
+        business_name=biz_name,
+    )
     return image, mime
 
 
-async def _overlay_logo(
+async def _apply_brand_badge(
     poster_bytes: bytes,
     poster_mime: str,
-    logo_url: str,
+    *,
+    logo_url: str | None,
+    business_name: str,
 ) -> tuple[bytes, str]:
     """
-    Fetch the business logo and paste it onto the bottom-center of the
-    generated poster. Always returns PNG to preserve transparency.
+    Guarantee every poster ships with a branded badge.
+
+    1. If `logo_url` is set, try to fetch + composite the image logo.
+       Retries with multiple User-Agent headers — some CDNs 403 on the
+       default httpx UA but accept a browser UA.
+    2. If the logo fetch fails OR no logo URL exists, fall back to a
+       typographic wordmark drawn from `business_name` on the white badge.
+    3. As a last resort (empty name AND no logo), apply a small
+       "Powered by Morpheus" badge so the poster never ships bare.
     """
-    import io
-    import asyncio
+    logo_bytes: bytes | None = None
+    if logo_url:
+        logo_bytes = await _fetch_logo_bytes(logo_url)
+
+    return await asyncio.to_thread(
+        _compose_branded_poster,
+        poster_bytes,
+        logo_bytes,
+        business_name,
+    )
+
+
+async def _fetch_logo_bytes(logo_url: str) -> bytes | None:
+    """
+    Attempt logo download with rotating User-Agents. Returns bytes on
+    success, None if every attempt failed (caller falls back to text).
+    """
     import httpx
-    from PIL import Image
 
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        resp = await client.get(logo_url, headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
-        logo_bytes = resp.content
+    user_agents = [
+        # Modern desktop Chrome — most CDNs whitelist this.
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        # Mobile Safari — some CDNs route differently.
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        # Default httpx — last resort.
+        "Mozilla/5.0",
+    ]
+    for ua in user_agents:
+        try:
+            async with httpx.AsyncClient(
+                timeout=12.0, follow_redirects=True
+            ) as client:
+                r = await client.get(logo_url, headers={"User-Agent": ua})
+            if r.status_code == 200 and r.content and len(r.content) > 200:
+                logger.info(
+                    f"logo fetched bytes={len(r.content)} url={logo_url[:80]}"
+                )
+                return r.content
+            logger.warning(
+                f"logo fetch HTTP {r.status_code} ua={ua[:30]}..."
+            )
+        except Exception as e:
+            logger.warning(f"logo fetch err ua={ua[:30]}...: {e!r}")
+    logger.warning(f"all logo fetch attempts failed url={logo_url}")
+    return None
 
-    def _composite() -> bytes:
-        poster = Image.open(io.BytesIO(poster_bytes)).convert("RGBA")
+
+def _compose_branded_poster(
+    poster_bytes: bytes,
+    logo_bytes: bytes | None,
+    business_name: str,
+) -> tuple[bytes, str]:
+    """Synchronous Pillow composite. Always returns PNG."""
+    import io
+    from PIL import Image, ImageDraw, ImageFont
+
+    poster = Image.open(io.BytesIO(poster_bytes)).convert("RGBA")
+    pw, ph = poster.size
+
+    # Sizing rules: badge width = 22% of poster for text wordmarks,
+    # 16% for image logos (image logos look heavier).
+    text_mode = logo_bytes is None
+    badge_w = int(pw * (0.42 if text_mode else 0.20))
+
+    if text_mode:
+        # Text wordmark — draw business name (or generic) on white pill.
+        wordmark = (business_name or "Powered by Morpheus").strip()
+        # Font size scales to badge width
+        font_size = max(20, int(badge_w * 0.13))
+        font = _load_font(font_size)
+        dummy = Image.new("RGBA", (1, 1))
+        bbox = ImageDraw.Draw(dummy).textbbox((0, 0), wordmark, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        pad_x = max(20, int(text_w * 0.18))
+        pad_y = max(14, int(text_h * 0.6))
+        badge_w = text_w + pad_x * 2
+        badge_h = text_h + pad_y * 2
+        badge = Image.new("RGBA", (badge_w, badge_h), (255, 255, 255, 235))
+        d = ImageDraw.Draw(badge)
+        d.text(
+            (pad_x, pad_y - bbox[1]),
+            wordmark,
+            fill=(15, 18, 25, 255),
+            font=font,
+        )
+        logo_layer = None
+    else:
+        # Image logo — resize to fit inside badge.
         logo = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
-
-        # scale logo to ~14% of poster width, preserve aspect
-        target_w = max(120, int(poster.width * 0.14))
+        target_w = badge_w
         ratio = target_w / logo.width
         target_h = int(logo.height * ratio)
         logo = logo.resize((target_w, target_h), Image.LANCZOS)
-
-        # white rounded badge behind logo for legibility
-        pad = max(8, int(target_w * 0.08))
+        pad = max(10, int(target_w * 0.10))
         badge = Image.new(
             "RGBA",
             (target_w + pad * 2, target_h + pad * 2),
-            (255, 255, 255, 230),
+            (255, 255, 255, 235),
         )
+        badge_w, badge_h = badge.size
+        logo_layer = logo
 
-        # bottom-center placement, ~5% from edge
-        x = (poster.width - badge.width) // 2
-        y = poster.height - badge.height - int(poster.height * 0.05)
+    # Bottom-center placement with ~5% margin
+    x = (pw - badge_w) // 2
+    y = ph - badge_h - int(ph * 0.05)
 
-        poster.alpha_composite(badge, (x, y))
-        poster.alpha_composite(logo, (x + pad, y + pad))
+    poster.alpha_composite(badge, (x, y))
+    if logo_layer is not None:
+        # pad value is the same we used above
+        pad = max(10, int(logo_layer.width * 0.10))
+        poster.alpha_composite(logo_layer, (x + pad, y + pad))
 
-        out = io.BytesIO()
-        poster.convert("RGB").save(out, format="PNG", optimize=True)
-        return out.getvalue()
+    out = io.BytesIO()
+    poster.convert("RGB").save(out, format="PNG", optimize=True)
+    logger.info(
+        f"brand badge applied mode={'text' if text_mode else 'logo'} "
+        f"bytes={out.tell()}"
+    )
+    return out.getvalue(), "image/png"
 
-    composed = await asyncio.to_thread(_composite)
-    logger.info(f"logo overlay applied bytes={len(composed)}")
-    return composed, "image/png"
+
+def _load_font(size: int):
+    """Try a few common system fonts; fall back to PIL's default."""
+    from PIL import ImageFont
+
+    candidates = [
+        # Windows
+        "C:/Windows/Fonts/segoeuib.ttf",  # Segoe UI Bold
+        "C:/Windows/Fonts/arialbd.ttf",   # Arial Bold
+        # macOS / Linux
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except (OSError, IOError):
+            continue
+    return ImageFont.load_default()
 
 
 async def _pollinations(prompt: str) -> tuple[bytes, str]:
