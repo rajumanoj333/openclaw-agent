@@ -139,6 +139,18 @@ export const api = {
 
   capabilities: () => req<{ capabilities: string[] }>("/onboarding/capabilities"),
 
+  availableAgents: () =>
+    req<{
+      agents: Array<{
+        slug: string;
+        name: string;
+        role: string;
+        icon: string;
+        color: string;
+        scope: string[];
+      }>;
+    }>("/onboarding/agents"),
+
   scrape: (url: string) =>
     req<{ summary: string; profile: BusinessProfileT; next_step: OnboardingStep }>(
       "/onboarding/scrape",
@@ -158,12 +170,17 @@ export const api = {
       { method: "POST", body: JSON.stringify(edits) },
     ),
 
-  saveAgent: (name: string, capabilities: string[], persona_extra = "") =>
+  saveAgent: (
+    name: string,
+    enabled_agents: string[],
+    persona_extra = "",
+    capabilities: string[] = [],
+  ) =>
     req<{ ok: boolean; agent: AgentCfg; next_step: OnboardingStep }>(
       "/onboarding/agent",
       {
         method: "POST",
-        body: JSON.stringify({ name, capabilities, persona_extra }),
+        body: JSON.stringify({ name, enabled_agents, capabilities, persona_extra }),
       },
     ),
 
