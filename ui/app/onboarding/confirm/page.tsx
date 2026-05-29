@@ -95,68 +95,86 @@ export default function ConfirmProfilePage() {
     );
   }
 
+  const missingFields =
+    !profile.name || !profile.description || profile.services.length === 0;
+
   return (
-    <div className="card p-5 sm:p-8 fade-in">
+    <div className="card p-6 sm:p-10 fade-in">
       <StepIndicator active={1} />
 
-      <h1 className="font-display italic text-[24px] sm:text-[30px] leading-none tracking-editorial text-ink mb-3">
-        Does this look right?
-      </h1>
-      <p className="text-sm text-text-dim mb-6 leading-relaxed">
-        Edit anything that's wrong. The agent will use exactly these details.
-      </p>
+      <div className="mb-7">
+        <h1 className="font-display italic text-[28px] sm:text-[36px] leading-[1.05] tracking-editorial text-ink mb-2">
+          Does this look right?
+        </h1>
+        <p className="text-[14px] text-text-dim leading-relaxed">
+          Edit anything that's wrong. The agent will use exactly these details
+          across every channel.
+        </p>
+      </div>
 
-      {(!profile.name ||
-        !profile.description ||
-        profile.services.length === 0) && (
-        <div className="text-xs text-warn bg-warn/10 border border-warn/30 rounded-xl p-3 mb-5">
-          Some fields couldn't be auto-extracted (this site is JS-heavy or
-          sparse on text). Please fill in the missing details below.
+      {missingFields && (
+        <div className="mb-7 text-[13px] text-warn bg-warn/8 border border-warn/25 rounded-2xl px-4 py-3 flex items-start gap-3">
+          <span className="mt-0.5 w-1.5 h-1.5 rounded-full bg-warn flex-shrink-0" />
+          <p className="leading-relaxed">
+            <b className="text-ink">Some fields are empty.</b> This site is
+            JS-heavy or doesn't surface contact / hours info. Fill them in below
+            so the agent has the full picture.
+          </p>
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="Business name" value={value("name")} onChange={(v) => update("name", v)} />
-        <Field label="Type" value={value("type")} onChange={(v) => update("type", v)} />
-        <Field
-          label="Tagline"
-          value={brandValue("tagline")}
-          onChange={(v) => update("brand.tagline", v)}
-        />
-        <Field label="City" value={value("city")} onChange={(v) => update("city", v)} />
-        <Field
-          label="Contact phone"
-          value={value("contact_phone")}
-          onChange={(v) => update("contact_phone", v)}
-        />
-        <Field label="Email" value={value("email")} onChange={(v) => update("email", v)} />
-        <Field label="Timings" value={value("timings")} onChange={(v) => update("timings", v)} />
-        <Field label="Tone" value={brandValue("tone")} onChange={(v) => update("brand.tone", v)} />
-      </div>
+      {/* ─── Section 1 · Identity ─────────────────────────────── */}
+      <Section title="Identity" subtitle="What the business is called and what they do">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <Field label="Business name" value={value("name")} onChange={(v) => update("name", v)} />
+          <Field label="Type" value={value("type")} onChange={(v) => update("type", v)} />
+          <Field
+            label="Tagline"
+            value={brandValue("tagline")}
+            onChange={(v) => update("brand.tagline", v)}
+          />
+          <Field label="Tone" value={brandValue("tone")} onChange={(v) => update("brand.tone", v)} />
+        </div>
+        <div className="mt-5">
+          <Field
+            label="Description"
+            value={value("description")}
+            onChange={(v) => update("description", v)}
+            textarea
+          />
+        </div>
+      </Section>
 
-      <div className="mt-4">
-        <Field
-          label="Description"
-          value={value("description")}
-          onChange={(v) => update("description", v)}
-          textarea
-        />
-      </div>
+      {/* ─── Section 2 · Contact ──────────────────────────────── */}
+      <Section title="Contact" subtitle="Where customers reach the business">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          <Field label="City" value={value("city")} onChange={(v) => update("city", v)} />
+          <Field
+            label="Contact phone"
+            value={value("contact_phone")}
+            onChange={(v) => update("contact_phone", v)}
+          />
+          <Field label="Email" value={value("email")} onChange={(v) => update("email", v)} />
+          <Field label="Hours" value={value("timings")} onChange={(v) => update("timings", v)} />
+        </div>
+      </Section>
 
-      <div className="mt-4">
+      {/* ─── Section 3 · Services ─────────────────────────────── */}
+      <Section title="Services" subtitle="What the agent will mention in posts and replies">
         <Field
           label="Services (comma-separated)"
           value={edits.services ?? profile.services.join(", ")}
           onChange={(v) => update("services", v)}
           textarea
         />
-      </div>
+      </Section>
 
-      <div className="mt-5">
-        <h3 className="text-xs font-medium text-text-dim uppercase tracking-wider mb-2">
-          Brand colors
-        </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {/* ─── Section 4 · Brand ────────────────────────────────── */}
+      <Section
+        title="Brand kit"
+        subtitle="Colors + logo the agent will use on every visual it produces"
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <ColorField
             label="Primary"
             value={brandValue("primary_color")}
@@ -173,40 +191,55 @@ export default function ConfirmProfilePage() {
             onChange={(v) => update("brand.accent_color", v)}
           />
         </div>
-      </div>
 
-      {profile.logo_url && (
-        <div className="mt-5">
-          <h3 className="text-xs font-medium text-text-dim uppercase tracking-wider mb-2">
-            Detected logo
-          </h3>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={profile.logo_url}
-            alt="Logo"
-            className="max-h-24 rounded-xl border border-border bg-white p-2"
-            referrerPolicy="no-referrer"
-            onError={(e) => {
-              // Some sites block hot-linking → fall back to local proxy.
-              // If proxy also fails, hide the broken image.
-              const t = e.currentTarget;
-              if (!t.src.includes("/api/img?")) {
-                t.src = `/api/img?url=${encodeURIComponent(profile.logo_url!)}`;
-              } else {
-                t.style.display = "none";
-              }
-            }}
-          />
-          <p className="mt-1.5 font-mono text-[10px] text-text-mute break-all">
-            {profile.logo_url}
-          </p>
-        </div>
-      )}
+        {profile.logo_url ? (
+          <div>
+            <p className="font-mono text-[10px] text-text-mute uppercase tracking-[0.18em] mb-2">
+              Detected logo
+            </p>
+            <div className="flex items-start gap-4 p-4 bg-bg border border-border rounded-2xl">
+              <div className="w-24 h-24 bg-white rounded-xl border border-border flex items-center justify-center flex-shrink-0 overflow-hidden">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={profile.logo_url}
+                  alt="Logo"
+                  className="max-w-full max-h-full object-contain"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    const t = e.currentTarget;
+                    if (!t.src.includes("/api/img?")) {
+                      t.src = `/api/img?url=${encodeURIComponent(
+                        profile.logo_url!,
+                      )}`;
+                    } else {
+                      t.style.display = "none";
+                    }
+                  }}
+                />
+              </div>
+              <div className="flex-1 min-w-0 pt-1">
+                <p className="text-[13px] text-text-dim mb-1.5">
+                  Composited onto every poster + image the agent generates.
+                </p>
+                <p className="font-mono text-[10px] text-text-mute break-all leading-relaxed">
+                  {profile.logo_url}
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-[12px] text-text-mute bg-bg border border-border rounded-2xl px-4 py-3">
+            No logo detected. Posters will use a typographic wordmark
+            ({profile.name || "your business name"}) as the brand badge.
+          </div>
+        )}
+      </Section>
 
-      <div className="mt-7 pt-5 border-t border-border flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+      {/* ─── Actions ──────────────────────────────────────────── */}
+      <div className="mt-2 pt-6 border-t border-border flex flex-col-reverse sm:flex-row gap-3 sm:justify-end sm:items-center">
         <button
           onClick={() => router.push("/onboarding/business")}
-          className="px-4 py-2 rounded-full border border-border text-text-dim hover:text-text hover:border-border-strong transition text-sm"
+          className="px-5 py-2.5 rounded-full border border-border text-text-dim hover:text-ink hover:border-border-strong transition text-[13px]"
         >
           Try another link
         </button>
@@ -234,6 +267,34 @@ export default function ConfirmProfilePage() {
   );
 }
 
+/**
+ * Visual section break. Each block of the wizard becomes a labelled
+ * group — better hierarchy than fields-jammed-together.
+ */
+function Section({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="py-6 border-t border-border first:border-t-0 first:pt-0">
+      <div className="mb-4">
+        <h2 className="font-display italic text-[20px] text-ink tracking-editorial leading-none mb-1.5">
+          {title}
+        </h2>
+        {subtitle && (
+          <p className="text-[12px] text-text-mute leading-relaxed">{subtitle}</p>
+        )}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function Field({
   label,
   value,
@@ -245,17 +306,24 @@ function Field({
   onChange: (v: string) => void;
   textarea?: boolean;
 }) {
+  const isEmpty = !value || !value.trim();
   const Comp = textarea ? "textarea" : "input";
   return (
     <label className="block">
-      <span className="text-[11px] text-text-mute uppercase tracking-wider font-medium block mb-1.5">
+      <span className="font-mono text-[10px] text-text-mute uppercase tracking-[0.18em] font-medium block mb-1.5">
         {label}
+        {isEmpty && (
+          <span className="ml-2 text-warn normal-case tracking-normal font-sans">
+            · empty
+          </span>
+        )}
       </span>
       <Comp
         value={value || ""}
         onChange={(e) => onChange(e.target.value)}
         rows={textarea ? 3 : undefined}
-        className="w-full bg-bg border border-border rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-text/40 transition placeholder:text-text-mute"
+        placeholder={isEmpty ? "Fill manually" : undefined}
+        className="w-full bg-bg border border-border rounded-xl px-3.5 py-2.5 text-[14px] text-ink outline-none focus:border-ink/40 transition placeholder:text-text-mute"
       />
     </label>
   );
@@ -270,21 +338,27 @@ function ColorField({
   value: string;
   onChange: (v: string) => void;
 }) {
+  const isEmpty = !value || !value.trim();
   return (
     <label className="block">
-      <span className="text-[11px] text-text-mute uppercase tracking-wider font-medium block mb-1.5">
+      <span className="font-mono text-[10px] text-text-mute uppercase tracking-[0.18em] font-medium block mb-1.5">
         {label}
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2.5">
         <span
-          className="w-9 h-9 rounded-lg border border-border flex-shrink-0"
-          style={{ backgroundColor: value || "transparent" }}
+          className={`w-11 h-11 rounded-xl border-2 flex-shrink-0 transition ${
+            isEmpty
+              ? "border-dashed border-border bg-bg"
+              : "border-border shadow-soft"
+          }`}
+          style={{ backgroundColor: isEmpty ? undefined : value }}
+          aria-label={isEmpty ? "No color set" : value}
         />
         <input
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
           placeholder="#hex"
-          className="flex-1 bg-bg border border-border rounded-xl px-3 py-2 text-sm text-text outline-none focus:border-text/40 transition font-mono placeholder:text-text-mute"
+          className="flex-1 bg-bg border border-border rounded-xl px-3 py-2.5 text-[13px] text-ink outline-none focus:border-ink/40 transition font-mono placeholder:text-text-mute"
         />
       </div>
     </label>

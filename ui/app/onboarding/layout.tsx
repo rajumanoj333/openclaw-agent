@@ -27,8 +27,8 @@ export default function OnboardingLayout({
   if (!ready) return null;
 
   return (
-    <main className="min-h-screen flex items-center justify-center px-4 py-8">
-      <div className="w-full max-w-2xl">{children}</div>
+    <main className="min-h-screen flex items-center justify-center px-3 sm:px-6 py-6 sm:py-10">
+      <div className="w-full max-w-3xl">{children}</div>
     </main>
   );
 }
