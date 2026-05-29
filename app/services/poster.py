@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
 
 from loguru import logger
 
@@ -126,51 +125,26 @@ async def generate_poster(
     profile: BusinessProfile | None = None,
 ) -> tuple[bytes, str]:
     """
-    Returns (image_bytes, mime_type). Raises RuntimeError on failure.
+    Returns (image_bytes, mime_type).
 
-    Pipeline (each step falls through to next on error/quota):
-      1. Fal AI — primary. FLUX schnell, ~3-6s, reliable CDN.
-      2. Gemini Nano Banana — secondary. 2.5 → 3.1 → 3-pro cascade.
-      3. Pollinations — last-resort free public service.
-      4. Brand badge composite (always applied to the final image).
+    Production architecture: Fal AI is the ONLY image generator.
+    FLUX schnell, ~3-6s per call, single retry on transient 5xx.
+    Raises RuntimeError if Fal fails after retries — caller surfaces
+    the error to the user (no silent quality degradation through
+    fallback chains).
+
+    Brand badge (logo or typographic wordmark) is always composited
+    onto the result.
     """
+    if not settings.fal_api_key.strip():
+        raise RuntimeError(
+            "FAL_API_KEY missing from .env — image generation disabled. "
+            "Add the key and restart FastAPI."
+        )
+
     prompt = _build_prompt(brief, profile)
-
-    image: bytes | None = None
-    mime: str | None = None
-
-    # 1. Fal AI primary
-    if settings.fal_api_key.strip() and image is None:
-        try:
-            image, mime = await _fal_generate(prompt)
-            logger.info(f"poster engine=fal model={settings.fal_image_model}")
-        except Exception as e:
-            logger.warning(f"fal failed: {e!r} — falling back to gemini")
-
-    # 2. Gemini fallback
-    if image is None and settings.gemini_key:
-        models = [settings.gemini_image_model] + [
-            m.strip()
-            for m in settings.gemini_image_fallback.split(",")
-            if m.strip() and m.strip() != settings.gemini_image_model
-        ]
-        for model in models:
-            try:
-                image, mime = await _gemini_generate(prompt, model)
-                logger.info(f"poster engine=gemini model={model}")
-                break
-            except Exception as e:
-                msg = str(e)
-                if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
-                    logger.warning(f"gemini quota model={model} — trying next")
-                    continue
-                logger.warning(f"gemini error model={model}: {e!r}")
-                continue
-
-    # 3. Pollinations last resort
-    if image is None:
-        logger.info("poster engine=pollinations model=flux (fallback)")
-        image, mime = await _pollinations(prompt)
+    image, mime = await _fal_generate(prompt)
+    logger.info(f"poster engine=fal model={settings.fal_image_model}")
 
     # Brand presence is non-negotiable per design: every poster carries
     # the business mark, even when the upstream logo URL is unreachable.
@@ -348,17 +322,25 @@ def _load_font(size: int):
     return ImageFont.load_default()
 
 
+_FAL_BASE = "https://fal.run"
+_FAL_MAX_PROMPT = 1500
+_FAL_TIMEOUT_S = 60.0
+
+
 async def _fal_generate(prompt: str) -> tuple[bytes, str]:
     """
     Fal AI image generation via the sync endpoint.
 
-    Returns (jpeg_bytes, "image/jpeg"). Uses FLUX schnell by default —
-    4-step model, very fast (~3-5s), portrait 9:16 aspect for social.
+    Uses FLUX schnell by default — 4-step model, ~3-5s, portrait_16_9
+    for social posters.
+
+    Returns (jpeg_bytes, mime). Single retry on transient 5xx / network
+    error before raising. Caller decides whether to surface the error
+    to the user or degrade gracefully.
 
     The Fal response contains a CDN URL; we download the bytes so the
-    downstream brand-badge composite + audio_store hosting flow stays
-    unchanged. (We don't pass through the raw CDN URL because we
-    composite the logo on top before serving.)
+    downstream brand-badge composite step works on raw image data and
+    the final composited result can be hosted alongside other media.
     """
     import re
     import unicodedata
@@ -369,161 +351,81 @@ async def _fal_generate(prompt: str) -> tuple[bytes, str]:
     if not api_key:
         raise RuntimeError("FAL_API_KEY missing")
 
-    # Fal accepts a long prompt but rejects extremely large payloads.
-    # Strip smart punctuation + cap at 1500 chars.
+    # Sanitize + cap prompt — Fal handles long prompts but ASCII-folded
+    # text avoids any tokenizer quirks across models.
     flat = unicodedata.normalize("NFKD", prompt)
     flat = flat.encode("ascii", "ignore").decode("ascii")
-    flat = re.sub(r"\s+", " ", flat).strip()[:1500]
+    flat = re.sub(r"\s+", " ", flat).strip()[:_FAL_MAX_PROMPT]
 
-    url = f"https://fal.run/{settings.fal_image_model}"
+    url = f"{_FAL_BASE}/{settings.fal_image_model}"
     headers = {
         "Authorization": f"Key {api_key}",
         "Content-Type": "application/json",
     }
     body = {
         "prompt": flat,
-        "image_size": "portrait_16_9",   # 9:16 close — same shape posters use
-        "num_inference_steps": 4,        # schnell default
+        "image_size": "portrait_16_9",
+        "num_inference_steps": 4,
         "num_images": 1,
         "enable_safety_checker": True,
     }
 
-    t0 = time.time()
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        r = await client.post(url, json=body, headers=headers)
-        if r.status_code != 200:
-            raise RuntimeError(
-                f"fal HTTP {r.status_code}: {r.text[:300]}"
-            )
-        data = r.json()
-        images = data.get("images") or []
-        if not images or not images[0].get("url"):
-            raise RuntimeError(f"fal no image in response: {str(data)[:200]}")
-        cdn_url = images[0]["url"]
-        gen_ms = int((time.time() - t0) * 1000)
-
-        # Download the image bytes from Fal's CDN
-        d = await client.get(cdn_url, timeout=30.0)
-        d.raise_for_status()
-        img_bytes = d.content
-
-    mime = images[0].get("content_type") or "image/jpeg"
-    logger.info(
-        f"fal generated bytes={len(img_bytes)} mime={mime} "
-        f"gen_ms={gen_ms} cdn={cdn_url[:60]}..."
-    )
-    return img_bytes, mime
-
-
-async def _pollinations(prompt: str) -> tuple[bytes, str]:
-    """
-    Free image generation via https://image.pollinations.ai/prompt/<text>
-    No auth, no quota, returns JPEG.
-
-    Reliability quirks observed in prod:
-      - Long URL-encoded prompts (>~1.5kb) regularly 500.
-      - Smart quotes / em-dash / non-breaking hyphens cause 500s.
-      - `turbo` model is more available than `flux` when servers are hot.
-    Strategy: aggressively flatten + ASCII-fold + cap to 500 chars, retry
-    twice with shorter prompts and alternate models before giving up.
-    """
-    import asyncio
-    import re
-    import unicodedata
-
-    import httpx
-    from urllib.parse import quote
-
-    # ASCII-fold smart punctuation that Pollinations rejects.
-    def _flatten(p: str, max_chars: int) -> str:
-        p = unicodedata.normalize("NFKD", p)
-        p = p.encode("ascii", "ignore").decode("ascii")
-        p = re.sub(r"\s+", " ", p).strip()
-        return p[:max_chars]
-
-    # Try shorter + alternate model on each retry — Pollinations free tier
-    # rate-limits per-prompt-hash, so a different prompt beats infinite retry.
-    attempts = [
-        ("flux", 500),
-        ("flux", 320),
-        ("turbo", 320),
-    ]
-
     last_err: str = ""
-    for model, cap in attempts:
-        flat = _flatten(prompt, cap)
-        url = (
-            f"https://image.pollinations.ai/prompt/{quote(flat)}"
-            f"?width=768&height=1280&nologo=true&model={model}"
-        )
+    for attempt in (1, 2):
+        t0 = time.time()
         try:
-            async with httpx.AsyncClient(
-                timeout=120.0, follow_redirects=True
-            ) as client:
-                resp = await client.get(url)
-            if resp.status_code == 200 and resp.content:
+            async with httpx.AsyncClient(timeout=_FAL_TIMEOUT_S) as client:
+                r = await client.post(url, json=body, headers=headers)
+
+                # Auth + client errors — don't retry, surface immediately
+                if r.status_code in (401, 403):
+                    raise RuntimeError(
+                        f"fal auth failed ({r.status_code}): check FAL_API_KEY"
+                    )
+                if 400 <= r.status_code < 500:
+                    raise RuntimeError(
+                        f"fal HTTP {r.status_code}: {r.text[:300]}"
+                    )
+                if r.status_code != 200:
+                    # 5xx — retry once
+                    last_err = f"HTTP {r.status_code}: {r.text[:200]}"
+                    raise httpx.HTTPStatusError(
+                        last_err, request=r.request, response=r,
+                    )
+
+                data = r.json()
+                images = data.get("images") or []
+                if not images or not images[0].get("url"):
+                    raise RuntimeError(
+                        f"fal no image in response: {str(data)[:200]}"
+                    )
+
+                cdn_url = images[0]["url"]
+                gen_ms = int((time.time() - t0) * 1000)
+
+                d = await client.get(cdn_url, timeout=30.0)
+                d.raise_for_status()
+                img_bytes = d.content
+                mime = images[0].get("content_type") or "image/jpeg"
+
                 logger.info(
-                    f"pollinations ok model={model} bytes={len(resp.content)} "
-                    f"prompt_chars={len(flat)}"
+                    f"fal generated bytes={len(img_bytes)} mime={mime} "
+                    f"gen_ms={gen_ms} attempt={attempt} "
+                    f"cdn={cdn_url[:60]}..."
                 )
-                return resp.content, "image/jpeg"
-            last_err = f"{resp.status_code} ({len(resp.content)}b)"
-        except Exception as e:
-            last_err = f"{type(e).__name__}: {e}"
-        logger.warning(
-            f"pollinations failed model={model} cap={cap} err={last_err} — "
-            "trying next"
-        )
-        await asyncio.sleep(1.5)
+                return img_bytes, mime
 
-    raise RuntimeError(f"all pollinations attempts failed: {last_err}")
-
-
-async def _gemini_generate(prompt: str, model: str | None = None) -> tuple[bytes, str]:
-    """Gemini Nano Banana image generation. Caller can pin a specific model."""
-    chosen = model or settings.gemini_image_model
-
-    def _run() -> tuple[bytes, str]:
-        # Lazy import: keeps app boot snappy if Gemini key isn't configured yet.
-        from google import genai
-
-        client = genai.Client(api_key=settings.gemini_key)
-
-        # Gemini image-generation models accept a plain prompt and return
-        # candidates whose `parts` contain `inline_data` with the image bytes.
-        response = client.models.generate_content(
-            model=chosen,
-            contents=[prompt],
-        )
-
-        candidates = getattr(response, "candidates", None) or []
-        for cand in candidates:
-            content = getattr(cand, "content", None)
-            if not content:
+        except RuntimeError:
+            # explicit RuntimeError = non-retryable (auth, 4xx, bad shape)
+            raise
+        except (httpx.HTTPError, httpx.HTTPStatusError) as e:
+            last_err = repr(e)
+            if attempt == 1:
+                logger.warning(f"fal attempt 1 failed: {last_err} — retrying")
+                await asyncio.sleep(1.5)
                 continue
-            for part in getattr(content, "parts", None) or []:
-                inline = getattr(part, "inline_data", None)
-                if inline and getattr(inline, "data", None):
-                    data: Any = inline.data
-                    # Some SDK versions return raw bytes; older versions returned
-                    # base64-encoded strings. Normalize.
-                    if isinstance(data, str):
-                        import base64
-                        data = base64.b64decode(data)
-                    mime = getattr(inline, "mime_type", None) or "image/png"
-                    return data, mime
+            raise RuntimeError(f"fal failed after 2 attempts: {last_err}")
 
-        # If we got here, the response had no image — surface useful debug info
-        text_blob = ""
-        for cand in candidates:
-            for part in getattr(getattr(cand, "content", None), "parts", None) or []:
-                t = getattr(part, "text", None)
-                if t:
-                    text_blob += t
-        raise RuntimeError(
-            f"Gemini returned no image. text_response={text_blob[:300]!r}"
-        )
+    raise RuntimeError(f"fal failed: {last_err}")
 
-    image, mime = await asyncio.to_thread(_run)
-    logger.info(f"gemini poster bytes={len(image)} mime={mime} model={chosen}")
-    return image, mime
+
