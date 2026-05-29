@@ -18,49 +18,30 @@ from app.services.business_profile import BrandKit, BusinessProfile
 from app.services.openclaw import ask_openclaw_raw
 
 
-# Long timeout — OpenClaw embedded-fallback can take minutes. Better to
-# wait for correct data than rush and get nulls.
-_OPENCLAW_EXTRACT_TIMEOUT = 300
+_OPENCLAW_EXTRACT_TIMEOUT = 120
 
-_OPENCLAW_PROMPT = """You are a business-info extraction agent. We scraped a \
-public link and collected text + brand colors below. Return STRICT JSON ONLY \
-(no prose, no markdown fences) matching this exact shape:
+# How much scraped text to send. openrouter/auto picks weaker models on
+# huge payloads + the model loses the JSON schema instruction in the tail.
+# 6k chars covers the homepage + about/contact preview.
+_MAX_SCRAPE_CHARS = 6000
 
-{
-  "name": "...",
-  "type": "...",
-  "category": "...",
-  "description": "...",
-  "city": "...",
-  "address": "...",
-  "phone": "...",
-  "email": "...",
-  "socials": {"instagram": "...", "facebook": "...", "youtube": "..."},
-  "timings": "...",
-  "services": ["..."],
-  "pricing_note": "...",
-  "brand": {
-    "primary_color": "#hex",
-    "secondary_color": "#hex",
-    "accent_color": "#hex",
-    "tone": "...",
-    "visual_style": "...",
-    "tagline": "..."
-  },
-  "confidence": "high"
-}
+# Smaller schema in the prompt — keep it parseable for weaker models too.
+_OPENCLAW_PROMPT = """Extract business info from the text below. Reply with \
+JSON ONLY — no prose, no markdown fences, no commentary.
+
+Use this exact shape (use null for missing fields):
+{"name":"...","type":"...","category":null,"description":"...","city":null,"address":null,"phone":null,"email":null,"socials":{},"timings":null,"services":[],"pricing_note":null,"brand":{"primary_color":null,"secondary_color":null,"accent_color":null,"tone":null,"visual_style":null,"tagline":null},"confidence":"high"}
 
 Rules:
-- JSON only — start with { and end with }. No prose, no markdown fences.
-- Use null (not empty string) for missing fields.
-- Prefer values literally present in the text over guesses.
-- For brand colors, pick from the provided list. Never invent hex codes.
-- The page text may include [JSON-LD] schema blocks and [META] tags at the
-  top. Use them as additional signals when they describe an Organization,
-  LocalBusiness, or the company itself — but ignore Product/Article schemas
-  (those describe individual products, not the business).
-- "confidence" reflects how complete the extraction is: high | medium | low.
+- Output starts with { and ends with }. Nothing else.
+- Pick brand colors from the BRAND_COLORS list only. Never invent hex codes.
+- Skip Product/Article schemas; only use Organization/Business signals.
 """
+
+# Lines starting with these markers are removed from scraped text before
+# sending — they're our own enrichment tags that can confuse models that
+# don't follow nested JSON well.
+_NOISE_PREFIXES = ("[JSON-LD]", "[META]", "[VISIBLE TEXT]")
 
 
 async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
@@ -90,7 +71,8 @@ async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
         if p.final_url:
             final_urls.append(p.final_url)
 
-    combined_text = "\n\n".join(combined_text_parts)[:20000]
+    combined_text = "\n\n".join(combined_text_parts)
+    combined_text = _strip_scrape_noise(combined_text)[:_MAX_SCRAPE_CHARS]
     if not combined_text.strip():
         # nothing fetched — return a low-confidence profile so user sees the failure
         prof = BusinessProfile(phone=phone, source_urls=[url], confidence="low")
@@ -129,24 +111,73 @@ _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
 
 async def _extract_via_openclaw(text: str, colors: list[str]) -> dict:
     """
-    Call OpenClaw with the extraction prompt. Returns {} on failure — user
-    sees an empty profile + banner asking them to retry or fill manually.
+    Call OpenClaw with the extraction prompt. Single retry with HALF the
+    text on parse failure — long prompts cause models to drop the JSON
+    instruction. Returns {} after retries are exhausted; UI surfaces an
+    empty profile + manual-fill banner.
     """
     if not text.strip():
         return {}
-    user_block = (
-        "--- BRAND COLORS FOUND (pick from these only) ---\n"
-        f"{', '.join(colors[:20]) if colors else '(none)'}\n\n"
-        "--- PAGE CONTENT ---\n"
-        f"{text}"
-    )
-    payload = f"{_OPENCLAW_PROMPT}\n\n{user_block}"
-    try:
-        raw = await ask_openclaw_raw(payload, to=None, timeout=_OPENCLAW_EXTRACT_TIMEOUT)
-    except Exception as e:
-        logger.warning(f"openclaw extraction failed: {e!r}")
-        return {}
-    return _parse_json(raw)
+
+    # Order matters: put the prompt LAST so it's the freshest instruction
+    # in the model's context window. Many models bias toward the most
+    # recent prompt segment.
+    colors_line = ", ".join(colors[:20]) if colors else "(none)"
+
+    for attempt, text_chunk in enumerate([text, text[: len(text) // 2]], start=1):
+        payload = (
+            f"BRAND_COLORS: {colors_line}\n\n"
+            f"--- PAGE CONTENT ---\n{text_chunk}\n--- END ---\n\n"
+            f"{_OPENCLAW_PROMPT}"
+        )
+        try:
+            raw = await ask_openclaw_raw(
+                payload, to=None, timeout=_OPENCLAW_EXTRACT_TIMEOUT
+            )
+        except Exception as e:
+            logger.warning(f"openclaw extraction attempt {attempt} failed: {e!r}")
+            continue
+
+        parsed = _parse_json(raw)
+        if parsed.get("name"):
+            logger.info(
+                f"extraction attempt {attempt} OK chars={len(payload)} "
+                f"reply_chars={len(raw)} keys={list(parsed.keys())}"
+            )
+            return parsed
+        logger.warning(
+            f"extraction attempt {attempt} parsed but empty — reply head: "
+            f"{raw[:200]!r}"
+        )
+
+    return {}
+
+
+def _strip_scrape_noise(text: str) -> str:
+    """
+    Drop our [JSON-LD] / [META] / [VISIBLE TEXT] tag lines before sending
+    to the model. Helpful upstream signal during scraping but confuses
+    smaller models that see structured tokens and try to mimic them.
+    """
+    lines = text.splitlines()
+    out: list[str] = []
+    skip_until_blank = False
+    for line in lines:
+        stripped = line.strip()
+        if any(stripped.startswith(p) for p in _NOISE_PREFIXES):
+            # Drop the marker. Following JSON-LD body until next blank stays
+            # too because the marker absence triggers skip_until_blank.
+            skip_until_blank = stripped.startswith("[JSON-LD]")
+            continue
+        if skip_until_blank:
+            if not stripped:
+                skip_until_blank = False
+            continue
+        out.append(line)
+    cleaned = "\n".join(out).strip()
+    # Also drop any standalone {...} JSON-looking lines longer than 80 chars —
+    # these are JSON-LD remnants that survived the marker-removal pass.
+    return cleaned
 
 
 def _parse_json(text: str) -> dict:
