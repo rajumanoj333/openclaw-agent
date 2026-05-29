@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_extract_model: str = "openai/gpt-4o-mini"
 
+    # Fal AI — primary image generation. FLUX schnell (4-step) for speed.
+    # Returns a hosted CDN URL we download from.
+    fal_api_key: str = ""
+    fal_image_model: str = "fal-ai/flux/schnell"
+
     @property
     def sarvam_key(self) -> str:
         return self.sarvam_api_key.strip()
