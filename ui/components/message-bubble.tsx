@@ -1,11 +1,15 @@
 "use client";
 
 import { Instagram, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import type { ChatEvent } from "@/lib/ws";
 import { ChannelBadge } from "./channel-badge";
+import {
+  parseStructuredReply,
+  StructuredBlock,
+} from "./structured-blocks";
 
 type PublishState =
   | { kind: "idle" }
@@ -16,6 +20,15 @@ type PublishState =
 export function MessageBubble({ ev }: { ev: ChatEvent }) {
   const isOut = ev.direction === "out";
   const [publish, setPublish] = useState<PublishState>({ kind: "idle" });
+
+  // Parse out <POST_PREVIEW> / <INVOICE_DRAFT> / etc blocks from agent
+  // replies. Only relevant for outgoing (agent → user) messages.
+  const parsed = useMemo(
+    () => (isOut && ev.body ? parseStructuredReply(ev.body) : null),
+    [isOut, ev.body],
+  );
+  const hasStructured = parsed && parsed.blocks.length > 0;
+  const displayBody = hasStructured ? parsed.intro : ev.body;
 
   const onPublish = async () => {
     if (!ev.media_url) return;
@@ -37,7 +50,7 @@ export function MessageBubble({ ev }: { ev: ChatEvent }) {
     >
       <div
         className={cn(
-          "max-w-[72%] flex flex-col gap-1.5",
+          "max-w-[88%] md:max-w-[72%] flex flex-col gap-1.5",
           isOut ? "items-start" : "items-end",
         )}
       >
@@ -63,16 +76,20 @@ export function MessageBubble({ ev }: { ev: ChatEvent }) {
               : { background: "hsl(220 30% 8%)", color: "#ffffff" }
           }
         >
-          {ev.body && (
-            <p className="whitespace-pre-wrap break-words">{ev.body}</p>
+          {displayBody && (
+            <p className="whitespace-pre-wrap break-words">{displayBody}</p>
           )}
+          {hasStructured &&
+            parsed.blocks.map((b, i) => (
+              <StructuredBlock key={`${b.name}-${i}`} block={b} />
+            ))}
           {ev.media_url && (
             <div className="mt-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={`/api/img?url=${encodeURIComponent(ev.media_url)}`}
-                alt="media"
-                className="rounded-2xl max-h-80 border border-border"
+                alt={ev.body ? `Media for: ${ev.body.slice(0, 60)}` : "Shared media"}
+                className="rounded-2xl max-h-80 w-full object-cover border border-border"
               />
               <div className="flex items-center justify-between mt-2 gap-3">
                 <a
@@ -107,9 +124,10 @@ export function MessageBubble({ ev }: { ev: ChatEvent }) {
                 </a>
               )}
               {publish.kind === "error" && (
-                <p className="mt-2 font-mono text-[10px] text-danger break-all">
-                  {publish.message}
-                </p>
+                <div className="mt-2 text-[11px] text-danger bg-danger/8 border border-danger/15 rounded-lg px-2.5 py-1.5" role="alert">
+                  <p className="font-medium text-[11px]">Publish failed</p>
+                  <p className="font-mono text-[10px] break-all opacity-80 mt-0.5">{publish.message}</p>
+                </div>
               )}
             </div>
           )}
