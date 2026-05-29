@@ -39,10 +39,12 @@ def _phone_only(to: str) -> str:
     return to.removeprefix("whatsapp:") if to.startswith("whatsapp:") else to
 
 
-async def _send_reply(to: str, text: str, *, with_audio: bool, lang: str) -> None:
+async def _send_reply(to: str, text: str, *, with_audio: bool, lang: str,
+                      agent_slug: str | None = None) -> None:
     """Always sends text. If `with_audio`, also sends a TTS audio version."""
     phone = _phone_only(to)
-    ws_hub.fire(phone, channel="whatsapp", direction="out", body=text[:1500], lang=lang)
+    ws_hub.fire(phone, channel="whatsapp", direction="out",
+                body=text[:1500], lang=lang, agent_slug=agent_slug)
     try:
         send_whatsapp(to, text[:1500])
     except Exception:
@@ -98,7 +100,8 @@ async def _process_poster(from_: str, e164: str, brief: str) -> None:
     business_name = (profile.name if profile else None) or "your business"
     caption = f"🖼️ Poster for {business_name}\nReply with edits, or 'post' when ready."
     ws_hub.fire(e164, channel="whatsapp", direction="out",
-                body=caption, media_url=url, kind="message")
+                body=caption, media_url=url, kind="message",
+                agent_slug="morpheus")
     try:
         send_whatsapp_media(from_, url, body=caption)
     except Exception:
@@ -107,7 +110,15 @@ async def _process_poster(from_: str, e164: str, brief: str) -> None:
 
 
 async def _process_text(from_: str, text: str, *, with_audio: bool = False,
-                        lang: str = "en-IN") -> None:
+                        lang: str = "en-IN",
+                        force_agent: str | None = None) -> None:
+    """
+    Pipeline shared by WhatsApp, Voice, and Web WS:
+      - WhatsApp/Voice: force_agent=None → intent classifier picks the agent.
+      - Web (per-agent thread): force_agent="ritu" / "kiran" / ... bypasses
+        the classifier so the user's explicit pick wins. Ritu's strict
+        scope rules then handle anything beyond social media.
+    """
     e164 = from_.removeprefix("whatsapp:") if from_.startswith("whatsapp:") else from_
 
     profile = business_profile.get(e164)
@@ -119,7 +130,7 @@ async def _process_text(from_: str, text: str, *, with_audio: bool = False,
         return
 
     intent = classify_intent(text)
-    logger.info(f"intent classified text={text!r} intent={intent}")
+    logger.info(f"intent classified text={text!r} intent={intent} force_agent={force_agent}")
 
     # Confirm pending onboarding profile.
     if intent == "confirm" and profile is not None and not profile.confirmed:
@@ -129,19 +140,25 @@ async def _process_text(from_: str, text: str, *, with_audio: bool = False,
         return
 
     # Poster intent: generate a brand-aware marketing creative.
-    if intent == "poster":
+    # If user explicitly picked a non-Morpheus agent, skip this — that
+    # agent should respond + decline if poster is out of their scope.
+    if intent == "poster" and (force_agent is None or force_agent == "morpheus"):
         await _process_poster(from_, e164, text)
         return
 
-    # Default: route to the right agent (intent classifier) + forward.
-    # Embedded OpenClaw runner can take ~90-180s on non-primed sessions.
+    # Pick the agent. Force-agent (UI) wins; otherwise intent classifier.
     from app.services import agent_config
-    from app.services.agents.registry import route_message
+    from app.services.agents.registry import AGENT_REGISTRY, route_message
 
     cfg = agent_config.get(e164)
     enabled = cfg.enabled_agents if cfg else []
-    agent_slug = route_message(text, enabled)
-    logger.info(f"routed message → agent={agent_slug}")
+
+    if force_agent and force_agent in AGENT_REGISTRY:
+        agent_slug = force_agent
+        logger.info(f"force_agent → {agent_slug}")
+    else:
+        agent_slug = route_message(text, enabled)
+        logger.info(f"routed message → agent={agent_slug}")
 
     try:
         reply = await ask_openclaw(
@@ -152,7 +169,8 @@ async def _process_text(from_: str, text: str, *, with_audio: bool = False,
         reply = f"Agent error: {e}"
 
     reply_lang = detect_lang(reply, hint=lang)
-    await _send_reply(from_, reply, with_audio=with_audio, lang=reply_lang)
+    await _send_reply(from_, reply, with_audio=with_audio, lang=reply_lang,
+                      agent_slug=agent_slug)
 
 
 async def _process_voice_note(from_: str, media_url: str, mime: str) -> None:

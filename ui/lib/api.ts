@@ -114,6 +114,15 @@ export interface AgentCfg {
   phone: string;
   name: string;
   capabilities: string[];
+  enabled_agents: string[];
+  agents?: Array<{
+    slug: string;
+    name: string;
+    role: string;
+    icon: string;
+    color: string;
+    scope: string[];
+  }>;
   persona_extra: string;
   created_at: number;
   updated_at: number;

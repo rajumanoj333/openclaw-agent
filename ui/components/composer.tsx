@@ -7,9 +7,11 @@ import { cn } from "@/lib/cn";
 export function Composer({
   onSend,
   disabled,
+  placeholder = "Ask anything — design a poster, draft a caption…",
 }: {
   onSend: (body: string) => void;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   const [value, setValue] = useState("");
 
@@ -29,16 +31,17 @@ export function Composer({
   };
 
   return (
-    <form onSubmit={submit} className="px-6 py-4">
-      <div className="card p-3 flex items-end gap-2">
+    <form onSubmit={submit} className="px-3 md:px-6 py-3 md:py-4">
+      <div className="card p-2.5 md:p-3 flex items-end gap-2">
         <textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKey}
-          placeholder="Ask anything — design a poster, draft a caption, run a campaign…"
+          placeholder={placeholder}
           rows={1}
           disabled={disabled}
-          className="flex-1 resize-none bg-transparent outline-none text-[15px] text-ink py-2 px-2 max-h-32 placeholder:text-text-mute leading-relaxed"
+          aria-label="Message input"
+          className="flex-1 resize-none bg-transparent outline-none text-[14px] md:text-[15px] text-ink py-2 px-2 max-h-32 placeholder:text-text-mute leading-relaxed"
         />
         <button
           type="submit"
@@ -59,7 +62,7 @@ export function Composer({
           <ArrowUp size={16} strokeWidth={2.5} />
         </button>
       </div>
-      <p className="font-mono text-[10px] text-text-mute mt-2.5 px-2 text-center tracking-wider uppercase">
+      <p className="hidden md:block font-mono text-[10px] text-text-mute mt-2.5 px-2 text-center tracking-wider uppercase">
         Press Enter to send · Shift + Enter for new line
       </p>
     </form>

@@ -31,6 +31,9 @@ class ChatEvent:
     lang: str | None = None
     kind: str = "message"          # message | status | task
     status: str | None = None      # for kind=status: "scraping" | "designing" | ...
+    agent_slug: str | None = None  # which agent generated this (out) or
+                                   # which agent the user addressed (in).
+                                   # None for system status events.
     meta: dict[str, Any] = field(default_factory=dict)
     ts: float = field(default_factory=time.time)
 
@@ -78,6 +81,7 @@ def fire(
     lang: str | None = None,
     kind: str = "message",
     status: str | None = None,
+    agent_slug: str | None = None,
     **meta: Any,
 ) -> None:
     """
@@ -93,6 +97,7 @@ def fire(
         lang=lang,
         kind=kind,
         status=status,
+        agent_slug=agent_slug,
         meta=dict(meta),
     )
     try:

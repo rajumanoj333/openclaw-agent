@@ -9,6 +9,7 @@ export interface ChatEvent {
   lang?: string | null;
   kind: "message" | "status" | "task";
   status?: string | null;
+  agent_slug?: string | null;     // which agent generated or was addressed
   meta?: Record<string, unknown>;
   ts: number;
 }
@@ -16,7 +17,7 @@ export interface ChatEvent {
 export type EventHandler = (ev: ChatEvent) => void;
 
 export interface ChatSocket {
-  send: (body: string) => void;
+  send: (body: string, agentSlug?: string) => void;
   close: () => void;
 }
 
@@ -65,9 +66,11 @@ export function openChatSocket(
   connect();
 
   return {
-    send: (body: string) => {
+    send: (body: string, agentSlug?: string) => {
       if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "msg", body }));
+        const payload: Record<string, unknown> = { type: "msg", body };
+        if (agentSlug) payload.agent_slug = agentSlug;
+        ws.send(JSON.stringify(payload));
       }
     },
     close: () => {

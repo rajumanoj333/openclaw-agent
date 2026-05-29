@@ -55,6 +55,14 @@ async def _handle_inbound(phone: str, raw: str) -> None:
     """
     Route messages typed in the UI through the same handler the WhatsApp
     webhook uses. Lazy import to avoid circular import at boot.
+
+    UI payload shape:
+      { "type": "msg", "body": "...", "agent_slug": "ritu" }
+
+    `agent_slug` (optional) FORCES routing to that agent — bypasses the
+    intent classifier. Used by per-agent chat threads where the user picked
+    the agent explicitly. Absent for WhatsApp/voice where the classifier
+    decides.
     """
     try:
         payload = json.loads(raw)
@@ -67,14 +75,18 @@ async def _handle_inbound(phone: str, raw: str) -> None:
     if not body:
         return
 
-    # NOTE: do NOT echo this back via ws_hub. The composer paints the user's
-    # own message optimistically, and broadcasting would double it on each
-    # connected client. Backend only broadcasts agent replies + status.
+    agent_slug = payload.get("agent_slug") or None
 
-    # Run through the same pipeline as WhatsApp text. Use a fake "whatsapp:"
-    # prefix so the existing handler can extract an E.164 cleanly.
+    # NOTE: do NOT echo back via ws_hub. Composer paints user message
+    # optimistically; broadcasting would double it on every connected client.
     from app.routes.whatsapp import _process_text
 
     asyncio.create_task(
-        _process_text(f"whatsapp:{phone}", body, with_audio=False, lang="en-IN")
+        _process_text(
+            f"whatsapp:{phone}",
+            body,
+            with_audio=False,
+            lang="en-IN",
+            force_agent=agent_slug,
+        )
     )

@@ -3,10 +3,16 @@
 import {
   Activity,
   Globe,
+  Image as ImageIcon,
   LogOut,
+  Menu,
   MessageCircle,
   Phone,
+  Receipt,
   RotateCcw,
+  Share2,
+  TrendingUp,
+  X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -14,6 +20,7 @@ import { Composer } from "@/components/composer";
 import { ConnectionPill } from "@/components/connection-pill";
 import { MessageBubble } from "@/components/message-bubble";
 import { SystemStatus } from "@/components/system-status";
+import { cn } from "@/lib/cn";
 import {
   api,
   clearAuth,
@@ -23,6 +30,85 @@ import {
   type BusinessProfileT,
 } from "@/lib/api";
 import { openChatSocket, type ChatEvent, type ChatSocket } from "@/lib/ws";
+
+
+// Static agent registry — must match backend (app/services/agents/*).
+// Display-only metadata; intent/scope rules live server-side.
+interface AgentCard {
+  slug: string;
+  name: string;
+  role: string;
+  scope: string;
+  color: "ui" | "whatsapp" | "voice" | "warn";
+  icon: React.ReactNode;
+  composerPlaceholder: string;
+  emptyHook: string;
+  examples: string[];
+}
+
+const AGENTS: AgentCard[] = [
+  {
+    slug: "morpheus",
+    name: "Morpheus",
+    role: "Marketing & Poster",
+    scope: "Campaigns, posters, brand visuals",
+    color: "ui",
+    icon: <ImageIcon size={15} />,
+    composerPlaceholder: "Ask Morpheus to design a poster, campaign, or visual…",
+    emptyHook: "Posters, campaigns, brand visuals. That's my lane.",
+    examples: [
+      "make me a diwali poster",
+      "design a campaign for new admission",
+      "create a flyer for monsoon sale",
+    ],
+  },
+  {
+    slug: "ritu",
+    name: "Ritu",
+    role: "Social Media Manager",
+    scope: "Captions, posts, hashtags, replies",
+    color: "whatsapp",
+    icon: <Share2 size={15} />,
+    composerPlaceholder: "Ask Ritu for a caption, post, or social reply…",
+    emptyHook: "Captions, hashtags, posts. Bound to social only.",
+    examples: [
+      "write me an instagram caption for diwali",
+      "draft a reply to this customer comment",
+      "give me a content idea for tuesday",
+    ],
+  },
+  {
+    slug: "kiran",
+    name: "Kiran",
+    role: "Invoice & Payments",
+    scope: "Invoices, payment reminders, GST",
+    color: "voice",
+    icon: <Receipt size={15} />,
+    composerPlaceholder: "Ask Kiran for an invoice or payment reminder…",
+    emptyHook: "Invoices, billing, reminders. Strictly numbers.",
+    examples: [
+      "draft an invoice for ₹5000 for laptop repair",
+      "send a payment reminder for invoice INV-2026-001",
+      "what's our GST tax line for software services?",
+    ],
+  },
+  {
+    slug: "anika",
+    name: "Anika",
+    role: "Business Advisor",
+    scope: "Strategy, competition, pricing",
+    color: "warn",
+    icon: <TrendingUp size={15} />,
+    composerPlaceholder: "Ask Anika for advice, strategy, or competitive insight…",
+    emptyHook: "Strategy, pricing, competition. Decision-grade advice only.",
+    examples: [
+      "should i raise my prices?",
+      "compare us against the nearby competitor",
+      "which channel should i double down on this quarter?",
+    ],
+  },
+];
+
 
 export default function ChatPage() {
   const router = useRouter();
@@ -38,12 +124,15 @@ export default function ChatPage() {
     body?: string;
   } | null>(null);
   const [pending, setPending] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [channels, setChannels] = useState<{
     whatsapp: string | null;
     voice: string | null;
   } | null>(null);
+  const [activeAgent, setActiveAgent] = useState<string>("morpheus");
   const sockRef = useRef<ChatSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     api
@@ -51,7 +140,6 @@ export default function ChatPage() {
       .then((c) => setChannels({ whatsapp: c.whatsapp, voice: c.voice }))
       .catch(() => {});
   }, []);
-  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const phone = useMemo(() => getPhone(), []);
   const token = useMemo(() => getToken(), []);
@@ -69,7 +157,13 @@ export default function ChatPage() {
           router.replace("/onboarding");
           return;
         }
-        api.getAgent().then(setAgent).catch(() => {});
+        api.getAgent().then((cfg) => {
+          setAgent(cfg);
+          // Default active agent = first enabled one
+          if (cfg?.enabled_agents && cfg.enabled_agents.length > 0) {
+            setActiveAgent(cfg.enabled_agents[0]);
+          }
+        }).catch(() => {});
         api
           .getProfile()
           .then(setProfile)
@@ -92,7 +186,6 @@ export default function ChatPage() {
               }
             } else {
               setEvents((cur) => [...cur, ev]);
-              // Any agent reply (direction === "out") clears the pending dots.
               if (ev.direction === "out") {
                 setPending(false);
                 if (pendingTimerRef.current) {
@@ -111,11 +204,34 @@ export default function ChatPage() {
     return () => sockRef.current?.close();
   }, [phone, token, router]);
 
+  // Events filtered to the active agent's thread. Includes:
+  //   - all events with matching agent_slug
+  //   - legacy events (no agent_slug) only when viewing the default agent
+  const visibleEvents = useMemo(() => {
+    return events.filter((ev) => {
+      if (ev.agent_slug) return ev.agent_slug === activeAgent;
+      // No agent_slug → legacy / WhatsApp inbound. Show only on the
+      // first-enabled (default) agent so they don't double up.
+      return activeAgent === (agent?.enabled_agents?.[0] ?? "morpheus");
+    });
+  }, [events, activeAgent, agent?.enabled_agents]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [events.length, pending]);
+  }, [visibleEvents.length, pending]);
 
   if (!phone) return null;
+
+  const enabledSlugs = agent?.enabled_agents ?? ["morpheus", "ritu", "kiran", "anika"];
+  const enabledAgents = AGENTS.filter((a) => enabledSlugs.includes(a.slug));
+  const active = AGENTS.find((a) => a.slug === activeAgent) ?? AGENTS[0];
+
+  // Unread counts per agent (messages from agent OR sent to that thread)
+  const perAgentCounts = events.reduce<Record<string, number>>((acc, ev) => {
+    if (!ev.agent_slug || ev.kind !== "message") return acc;
+    acc[ev.agent_slug] = (acc[ev.agent_slug] ?? 0) + 1;
+    return acc;
+  }, {});
 
   const onSend = (body: string) => {
     setEvents((cur) => [
@@ -126,13 +242,12 @@ export default function ChatPage() {
         direction: "in",
         body,
         kind: "message",
+        agent_slug: activeAgent,
         ts: Date.now() / 1000,
       } as ChatEvent,
     ]);
-    sockRef.current?.send(body);
+    sockRef.current?.send(body, activeAgent);
     setPending(true);
-    // Fail-safe: drop the typing indicator after 5min in case WS misses the
-    // reply event (network blip, server restart mid-call, etc).
     if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current);
     pendingTimerRef.current = setTimeout(() => setPending(false), 5 * 60_000);
   };
@@ -153,7 +268,7 @@ export default function ChatPage() {
     try {
       await api.reset();
     } catch {
-      /* ignore — even if server fails, push them through */
+      /* ignore */
     }
     sockRef.current?.close();
     router.replace("/onboarding");
@@ -168,65 +283,42 @@ export default function ChatPage() {
     {} as Record<string, number>,
   );
 
-  const agentName = agent?.name || "Morpheus";
   const businessName = profile?.name;
 
   return (
     <main className="h-screen flex">
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-ink/30 z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* SIDEBAR */}
-      <aside className="w-80 hidden md:flex flex-col border-r border-border bg-bg-elev/60 backdrop-blur-xl">
-        <div className="p-7 pb-6 border-b border-border">
-          <div className="rule mb-5">
+      <aside
+        className={`w-80 flex flex-col border-r border-border bg-bg-elev/60 backdrop-blur-xl fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-out md:relative md:translate-x-0 overflow-y-auto ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+      >
+        <button
+          onClick={() => setSidebarOpen(false)}
+          className="md:hidden absolute top-4 right-4 p-2 rounded-full hover:bg-bg transition"
+          aria-label="Close sidebar"
+        >
+          <X size={18} className="text-text-mute" />
+        </button>
+
+        {/* Business header */}
+        <div className="p-6 pb-5 border-b border-border">
+          <div className="rule mb-4">
             <span>The Studio</span>
           </div>
-          <h2 className="font-display text-[34px] leading-[1.05] text-ink italic font-medium tracking-editorial">
-            {agentName}
+          <h2 className="font-display text-[26px] leading-[1.05] text-ink italic font-medium tracking-editorial">
+            {businessName || "Your Business"}
           </h2>
-          <p className="mt-1.5 text-[12px] text-text-mute font-mono uppercase tracking-[0.18em]">
-            marketing employee
+          <p className="mt-1 text-[11px] text-text-mute font-mono uppercase tracking-[0.18em]">
+            {profile?.brand?.tone || "marketing studio"}
           </p>
-
-          <div className="mt-5">
-            {!profileLoaded ? (
-              <div className="space-y-2">
-                <div className="skeleton h-3 w-2/3" />
-                <div className="skeleton h-3 w-1/2" />
-              </div>
-            ) : businessName ? (
-              <p className="text-[14px] text-text-dim leading-relaxed">
-                Acting for{" "}
-                <span
-                  className="font-medium"
-                  style={{ color: "hsl(220 30% 8%)" }}
-                >
-                  {businessName}
-                </span>
-                {profile?.brand?.tone && (
-                  <>
-                    <span className="text-text-mute"> · </span>
-                    <span className="text-text-mute">
-                      {profile.brand.tone}
-                    </span>
-                  </>
-                )}
-              </p>
-            ) : (
-              <div className="text-[13px] leading-relaxed">
-                <p className="text-warn font-medium mb-1">
-                  Profile lost on server restart
-                </p>
-                <button
-                  onClick={() => router.replace("/onboarding")}
-                  className="font-mono text-[11px] uppercase tracking-[0.18em] text-text-dim hover:text-text underline underline-offset-4"
-                >
-                  re-link →
-                </button>
-              </div>
-            )}
-          </div>
-
           {profile?.brand && (
-            <div className="flex gap-1.5 mt-4">
+            <div className="flex gap-1.5 mt-3">
               {[
                 profile.brand.primary_color,
                 profile.brand.secondary_color,
@@ -236,17 +328,51 @@ export default function ChatPage() {
                 .map((c) => (
                   <span
                     key={c}
-                    className="w-6 h-6 rounded-md border border-border shadow-soft"
+                    className="w-5 h-5 rounded-md border border-border shadow-soft"
                     style={{ backgroundColor: c! }}
                     title={c!}
                   />
                 ))}
             </div>
           )}
+
+          {!profile && profileLoaded && (
+            <div className="mt-4 text-[12px] leading-relaxed bg-warn/8 border border-warn/20 rounded-xl p-3">
+              <p className="text-warn font-medium mb-1.5">No profile linked</p>
+              <button
+                onClick={() => router.replace("/onboarding")}
+                className="btn-primary text-[11px] px-3 py-1.5 inline-flex items-center gap-1.5"
+              >
+                Re-link business
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className="p-7 border-b border-border">
-          <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-text-mute mb-4">
+        {/* Agent picker */}
+        <div className="p-6 border-b border-border">
+          <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-text-mute mb-3">
+            Your team
+          </h3>
+          <div className="space-y-2">
+            {enabledAgents.map((a) => (
+              <AgentRow
+                key={a.slug}
+                agent={a}
+                active={a.slug === activeAgent}
+                unread={perAgentCounts[a.slug] ?? 0}
+                onClick={() => {
+                  setActiveAgent(a.slug);
+                  setSidebarOpen(false);
+                }}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Channels */}
+        <div className="p-6 border-b border-border">
+          <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-text-mute mb-3">
             Channels
           </h3>
           <ChannelRow
@@ -272,24 +398,9 @@ export default function ChatPage() {
           />
         </div>
 
-        {agent && agent.capabilities.length > 0 && (
-          <div className="p-7 border-b border-border">
-            <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-text-mute mb-4">
-              Scope
-            </h3>
-            <div className="flex flex-wrap gap-1.5">
-              {agent.capabilities.map((c) => (
-                <span key={c} className="tag">
-                  {c.replace(/_/g, " ")}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
         <SystemStatus phone={phone} />
 
-        <div className="mt-auto p-7 space-y-2">
+        <div className="mt-auto p-6 space-y-2">
           <button
             onClick={reset}
             className="btn-ghost w-full justify-center inline-flex items-center gap-2"
@@ -305,7 +416,7 @@ export default function ChatPage() {
             <LogOut size={12} />
             Sign out
           </button>
-          <p className="font-mono text-[11px] text-text-mute text-center mt-3 tracking-wider">
+          <p className="font-mono text-[10px] text-text-mute text-center mt-3 tracking-wider">
             {phone}
           </p>
         </div>
@@ -313,24 +424,37 @@ export default function ChatPage() {
 
       {/* MAIN */}
       <section className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-end justify-between px-8 py-5 border-b border-border bg-bg-elev/40 backdrop-blur-xl">
-          <div>
-            <h1 className="font-display text-[26px] italic leading-none text-ink tracking-editorial">
-              {agentName}
-            </h1>
-            <p className="mt-1.5 text-[12px] text-text-mute font-mono">
-              {businessName ? (
-                <>acting for {businessName.toLowerCase()}</>
-              ) : (
-                phone
+        <header className="flex items-center justify-between px-4 md:px-8 py-4 md:py-5 border-b border-border bg-bg-elev/40 backdrop-blur-xl">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="md:hidden p-2 -ml-1 rounded-full hover:bg-bg transition"
+              aria-label="Open sidebar"
+            >
+              <Menu size={20} className="text-text-dim" />
+            </button>
+            <span
+              className={cn(
+                "hidden md:inline-flex items-center justify-center w-9 h-9 rounded-full flex-shrink-0",
+                agentColorBg(active.color),
               )}
-            </p>
+            >
+              <span className={agentColorText(active.color)}>{active.icon}</span>
+            </span>
+            <div className="min-w-0">
+              <h1 className="font-display text-[20px] md:text-[24px] italic leading-none text-ink tracking-editorial truncate">
+                {active.name}
+              </h1>
+              <p className="mt-1 text-[11px] md:text-[12px] text-text-mute font-mono truncate">
+                {active.role} · acting for {businessName?.toLowerCase() || phone}
+              </p>
+            </div>
           </div>
           <ConnectionPill state={state} />
         </header>
 
         {activeStatus && (
-          <div className="px-8 py-3 border-b border-border bg-warn/5">
+          <div className="px-4 md:px-8 py-3 border-b border-border bg-warn/5">
             <div className="inline-flex items-center gap-2.5 text-[13px] text-warn">
               <Activity size={13} className="pulse-dot" />
               <span className="capitalize font-medium">
@@ -345,55 +469,164 @@ export default function ChatPage() {
           </div>
         )}
 
-        <section className="flex-1 overflow-y-auto px-8 py-8">
-          {events.length === 0 && !activeStatus && (
+        <section
+          className="flex-1 overflow-y-auto px-4 md:px-8 py-6 md:py-8"
+          role="log"
+          aria-live="polite"
+          aria-label={`Chat with ${active.name}`}
+        >
+          {visibleEvents.length === 0 && !activeStatus && (
             <div className="h-full flex items-center justify-center text-center">
               <div className="max-w-xl">
-                <div className="relative inline-block mb-7 rise" style={{ animationDelay: "60ms" }}>
-                  <div className="w-36 h-36 mx-auto blob" />
-                  <span
-                    aria-hidden
-                    className="absolute inset-0 flex items-center justify-center font-display italic text-[64px] text-ink/85 tracking-editorial"
-                  >
-                    M
+                <div
+                  className={cn(
+                    "w-16 h-16 mx-auto mb-5 rounded-full flex items-center justify-center",
+                    agentColorBg(active.color),
+                  )}
+                  style={{ animationDelay: "60ms" }}
+                >
+                  <span className={cn("scale-150", agentColorText(active.color))}>
+                    {active.icon}
                   </span>
                 </div>
                 <h2
-                  className="font-display italic text-[40px] leading-[1.05] text-ink tracking-editorial mb-4 rise"
+                  className="font-display italic text-[28px] md:text-[36px] leading-[1.05] text-ink tracking-editorial mb-2 rise"
                   style={{ animationDelay: "180ms" }}
                 >
-                  Hey — I'm {agentName}.
+                  Hi — I'm {active.name}.
                 </h2>
                 <p
-                  className="text-[15px] text-text-dim leading-relaxed mb-8 max-w-md mx-auto rise"
-                  style={{ animationDelay: "300ms" }}
+                  className="text-[14px] text-text-mute font-mono uppercase tracking-[0.18em] mb-4 rise"
+                  style={{ animationDelay: "250ms" }}
                 >
-                  Send me a message here, on WhatsApp, or call. Everything syncs
-                  to one thread in real time.
+                  {active.role}
+                </p>
+                <p
+                  className="text-[14px] md:text-[15px] text-text-dim leading-relaxed mb-7 max-w-md mx-auto rise"
+                  style={{ animationDelay: "320ms" }}
+                >
+                  {active.emptyHook}
                 </p>
                 <div
                   className="grid gap-2 text-left rise"
                   style={{ animationDelay: "420ms" }}
                 >
-                  <Suggestion text="make me a poster for diwali sale" />
-                  <Suggestion text="what's our brand tone?" />
-                  <Suggestion text="draft an instagram caption for new admission" />
+                  {active.examples.map((ex) => (
+                    <Suggestion key={ex} text={ex} onSend={onSend} />
+                  ))}
                 </div>
               </div>
             </div>
           )}
-          {events.map((ev, i) => (
+          {visibleEvents.map((ev, i) => (
             <MessageBubble key={`${ev.ts}-${i}`} ev={ev} />
           ))}
-          {pending && <TypingBubble agentName={agentName} />}
+          {pending && <TypingBubble agentName={active.name} />}
           <div ref={bottomRef} />
         </section>
 
-        <Composer onSend={onSend} disabled={state !== "open"} />
+        <Composer
+          onSend={onSend}
+          disabled={state !== "open"}
+          placeholder={active.composerPlaceholder}
+        />
       </section>
     </main>
   );
 }
+
+// ─── Agent picker row ─────────────────────────────────────────────────
+
+function AgentRow({
+  agent,
+  active,
+  unread,
+  onClick,
+}: {
+  agent: AgentCard;
+  active: boolean;
+  unread: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "w-full text-left rounded-xl p-3 transition flex items-start gap-3 border",
+        active
+          ? cn(agentColorBg(agent.color), agentColorBorder(agent.color))
+          : "border-transparent hover:bg-bg/60",
+      )}
+    >
+      <span
+        className={cn(
+          "mt-0.5 w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0",
+          active ? "bg-bg-elev" : agentColorBg(agent.color),
+        )}
+      >
+        <span className={agentColorText(agent.color)}>{agent.icon}</span>
+      </span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2">
+          <span
+            className={cn(
+              "text-[14px] font-medium leading-none",
+              active ? "text-ink" : "text-text-dim",
+            )}
+          >
+            {agent.name}
+          </span>
+          {unread > 0 && (
+            <span className="font-mono text-[10px] text-text-mute tabular-nums">
+              {String(unread).padStart(2, "0")}
+            </span>
+          )}
+        </div>
+        <p
+          className={cn(
+            "text-[11px] mt-0.5 leading-snug",
+            active ? "text-text-dim" : "text-text-mute",
+          )}
+        >
+          {agent.role}
+        </p>
+        {active && (
+          <p className="text-[10px] text-text-mute mt-1 font-mono uppercase tracking-wider">
+            {agent.scope}
+          </p>
+        )}
+      </div>
+    </button>
+  );
+}
+
+// Tailwind class helpers — keep static so JIT picks them up
+function agentColorBg(c: AgentCard["color"]): string {
+  return {
+    ui: "bg-ui/10",
+    whatsapp: "bg-whatsapp/10",
+    voice: "bg-voice/10",
+    warn: "bg-warn/10",
+  }[c];
+}
+function agentColorText(c: AgentCard["color"]): string {
+  return {
+    ui: "text-ui",
+    whatsapp: "text-whatsapp",
+    voice: "text-voice",
+    warn: "text-warn",
+  }[c];
+}
+function agentColorBorder(c: AgentCard["color"]): string {
+  return {
+    ui: "border-ui/30",
+    whatsapp: "border-whatsapp/30",
+    voice: "border-voice/30",
+    warn: "border-warn/30",
+  }[c];
+}
+
+// ─── Channels list ────────────────────────────────────────────────────
 
 function ChannelRow({
   icon,
@@ -408,20 +641,16 @@ function ChannelRow({
   color: "whatsapp" | "voice" | "ui";
   target?: string | null;
 }) {
-  const dot = {
-    whatsapp: "bg-whatsapp",
-    voice: "bg-voice",
-    ui: "bg-ui",
-  }[color];
+  const dot = { whatsapp: "bg-whatsapp", voice: "bg-voice", ui: "bg-ui" }[color];
   return (
     <div className="py-2 group">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 text-[14px] text-text-dim group-hover:text-text transition-colors">
+        <div className="flex items-center gap-3 text-[13px] text-text-dim group-hover:text-text transition-colors">
           <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
           <span className="text-text-mute">{icon}</span>
           {label}
         </div>
-        <span className="font-mono text-[12px] text-text-mute tabular-nums">
+        <span className="font-mono text-[11px] text-text-mute tabular-nums">
           {String(count).padStart(2, "0")}
         </span>
       </div>
@@ -436,7 +665,11 @@ function ChannelRow({
 
 function TypingBubble({ agentName }: { agentName: string }) {
   return (
-    <div className="flex w-full mb-5 justify-start fade-in">
+    <div
+      className="flex w-full mb-5 justify-start fade-in"
+      role="status"
+      aria-label={`${agentName} is typing`}
+    >
       <div className="max-w-[72%] flex flex-col gap-1.5 items-start">
         <div className="flex items-center gap-2 px-1">
           <span className="font-mono text-[10px] text-text-mute uppercase tracking-[0.18em]">
@@ -444,7 +677,7 @@ function TypingBubble({ agentName }: { agentName: string }) {
           </span>
         </div>
         <div className="bg-bg-elev border border-border rounded-3xl rounded-bl-md shadow-card px-5 py-3.5">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5" aria-hidden="true">
             <span className="typing-dot" />
             <span className="typing-dot" style={{ animationDelay: "150ms" }} />
             <span className="typing-dot" style={{ animationDelay: "300ms" }} />
@@ -455,10 +688,20 @@ function TypingBubble({ agentName }: { agentName: string }) {
   );
 }
 
-function Suggestion({ text }: { text: string }) {
+function Suggestion({
+  text,
+  onSend,
+}: {
+  text: string;
+  onSend: (body: string) => void;
+}) {
   return (
-    <div className="text-[14px] text-text-dim bg-bg-elev border border-border rounded-2xl px-5 py-3.5 hover:border-border-strong hover:text-ink transition cursor-default shadow-soft">
+    <button
+      type="button"
+      onClick={() => onSend(text)}
+      className="w-full text-left text-[14px] text-text-dim bg-bg-elev border border-border rounded-2xl px-5 py-3.5 hover:border-border-strong hover:text-ink transition cursor-pointer shadow-soft"
+    >
       {text}
-    </div>
+    </button>
   );
 }
