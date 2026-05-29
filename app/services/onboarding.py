@@ -1,46 +1,32 @@
 """
-Onboarding orchestrator: scrape → ask OpenClaw to extract structured business
-info → save profile → produce a human-readable WhatsApp summary.
+Onboarding orchestrator.
 
-OpenClaw is the only extraction path. The VM must be up; on failure we
-return an empty profile so the user sees the failure and can retry / fill
-manually instead of getting silently-wrong data from a second LLM.
+Two-LLM split (deliberate):
+  - DATA EXTRACTION (URL → BusinessProfile JSON) goes via OpenRouter
+    directly with strict JSON-schema response_format. Deterministic,
+    cheap, fast, no persona drift.
+  - AGENT REASONING (chat / multi-agent conversation) goes via OpenClaw.
+    OpenClaw is the brain — it holds session memory, brand context,
+    and the per-agent priming.
+
+After extraction succeeds, the saved profile + agent config is shipped
+to OpenClaw via `prime_all_enabled(phone)` so every enabled agent gets
+the full business dossier in their primed session.
 """
 from __future__ import annotations
 
-import json
-import re
-
 from loguru import logger
 
-from app.services import business_profile, scrape
+from app.services import business_profile, llm_extract, scrape
 from app.services.business_profile import BrandKit, BusinessProfile
-from app.services.openclaw import ask_openclaw_raw
 
 
-_OPENCLAW_EXTRACT_TIMEOUT = 120
+# How much scraped text to ship to the extractor. 8k chars covers
+# homepage + /about + /contact comfortably without burning tokens.
+_MAX_SCRAPE_CHARS = 8000
 
-# How much scraped text to send. openrouter/auto picks weaker models on
-# huge payloads + the model loses the JSON schema instruction in the tail.
-# 6k chars covers the homepage + about/contact preview.
-_MAX_SCRAPE_CHARS = 6000
-
-# Smaller schema in the prompt — keep it parseable for weaker models too.
-_OPENCLAW_PROMPT = """Extract business info from the text below. Reply with \
-JSON ONLY — no prose, no markdown fences, no commentary.
-
-Use this exact shape (use null for missing fields):
-{"name":"...","type":"...","category":null,"description":"...","city":null,"address":null,"phone":null,"email":null,"socials":{},"timings":null,"services":[],"pricing_note":null,"brand":{"primary_color":null,"secondary_color":null,"accent_color":null,"tone":null,"visual_style":null,"tagline":null},"confidence":"high"}
-
-Rules:
-- Output starts with { and ends with }. Nothing else.
-- Pick brand colors from the BRAND_COLORS list only. Never invent hex codes.
-- Skip Product/Article schemas; only use Organization/Business signals.
-"""
-
-# Lines starting with these markers are removed from scraped text before
-# sending — they're our own enrichment tags that can confuse models that
-# don't follow nested JSON well.
+# Our scrape.py enrichment markers. Stripped before extraction since the
+# extractor reads visible text directly.
 _NOISE_PREFIXES = ("[JSON-LD]", "[META]", "[VISIBLE TEXT]")
 
 
@@ -83,9 +69,9 @@ async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
             "Try sharing your website URL or business Google Maps link."
         )
 
-    parsed = await _extract_via_openclaw(combined_text, all_colors)
+    parsed = await llm_extract.extract_profile(combined_text, all_colors)
     logger.info(
-        f"onboarding extraction phone={phone} via=openclaw "
+        f"onboarding extraction phone={phone} via=openrouter "
         f"keys={list(parsed.keys()) if parsed else 'EMPTY'}"
     )
 
@@ -104,53 +90,6 @@ async def run_onboarding(phone: str, url: str) -> tuple[BusinessProfile, str]:
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────
-
-
-_JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
-
-
-async def _extract_via_openclaw(text: str, colors: list[str]) -> dict:
-    """
-    Call OpenClaw with the extraction prompt. Single retry with HALF the
-    text on parse failure — long prompts cause models to drop the JSON
-    instruction. Returns {} after retries are exhausted; UI surfaces an
-    empty profile + manual-fill banner.
-    """
-    if not text.strip():
-        return {}
-
-    # Order matters: put the prompt LAST so it's the freshest instruction
-    # in the model's context window. Many models bias toward the most
-    # recent prompt segment.
-    colors_line = ", ".join(colors[:20]) if colors else "(none)"
-
-    for attempt, text_chunk in enumerate([text, text[: len(text) // 2]], start=1):
-        payload = (
-            f"BRAND_COLORS: {colors_line}\n\n"
-            f"--- PAGE CONTENT ---\n{text_chunk}\n--- END ---\n\n"
-            f"{_OPENCLAW_PROMPT}"
-        )
-        try:
-            raw = await ask_openclaw_raw(
-                payload, to=None, timeout=_OPENCLAW_EXTRACT_TIMEOUT
-            )
-        except Exception as e:
-            logger.warning(f"openclaw extraction attempt {attempt} failed: {e!r}")
-            continue
-
-        parsed = _parse_json(raw)
-        if parsed.get("name"):
-            logger.info(
-                f"extraction attempt {attempt} OK chars={len(payload)} "
-                f"reply_chars={len(raw)} keys={list(parsed.keys())}"
-            )
-            return parsed
-        logger.warning(
-            f"extraction attempt {attempt} parsed but empty — reply head: "
-            f"{raw[:200]!r}"
-        )
-
-    return {}
 
 
 def _strip_scrape_noise(text: str) -> str:
@@ -178,39 +117,6 @@ def _strip_scrape_noise(text: str) -> str:
     # Also drop any standalone {...} JSON-looking lines longer than 80 chars —
     # these are JSON-LD remnants that survived the marker-removal pass.
     return cleaned
-
-
-def _parse_json(text: str) -> dict:
-    if not text:
-        return {}
-    text = text.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-    m = _JSON_BLOCK_RE.search(text)
-    if not m:
-        return {}
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        # forgiving: trim trailing prose past the first balanced {...}
-        depth = 0
-        end = -1
-        blob = m.group(0)
-        for i, ch in enumerate(blob):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-        if end > 0:
-            try:
-                return json.loads(blob[:end])
-            except json.JSONDecodeError:
-                pass
-    return {}
 
 
 def _build_profile(

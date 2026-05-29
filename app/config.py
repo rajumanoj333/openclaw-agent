@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     # explicitly creating an entity.
     composio_user_id: str = "default"
 
+    # OpenRouter — used directly for deterministic data extraction
+    # (URL scrape → JSON business profile). Bypasses OpenClaw's workspace
+    # persona + nested-response shape. Cheap + fast model with
+    # response_format=json_schema for strict output.
+    openrouter_api_key: str = ""
+    openrouter_extract_model: str = "openai/gpt-4o-mini"
+
     @property
     def sarvam_key(self) -> str:
         return self.sarvam_api_key.strip()
