@@ -227,7 +227,16 @@ async def _process_voice_call(caller: str, recording_url: str, lang: str) -> Non
         logger.exception("twilio WA confirm send failed")
 
     try:
-        reply = await ask_openclaw(transcript, to=caller, timeout=180)
+        # Voice routes through the same intent classifier as web/WhatsApp.
+        from app.services import agent_config
+        from app.services.agents.registry import route_message
+
+        cfg = agent_config.get(caller)
+        enabled = cfg.enabled_agents if cfg else []
+        agent_slug = route_message(transcript, enabled)
+        reply = await ask_openclaw(
+            transcript, phone=caller, agent_slug=agent_slug, timeout=180
+        )
     except Exception as e:
         logger.exception("openclaw call failed")
         reply = f"I ran into an error: {e}"

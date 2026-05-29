@@ -157,14 +157,25 @@ async def _probe_composio() -> tuple[str, str]:
 
 
 async def _probe_openclaw_lock(phone: str | None) -> tuple[str, str]:
-    """Whether OpenClaw session is primed for this phone (post-onboarding)."""
+    """How many of the owner's enabled agents are primed."""
     if not phone:
         return "warn", "no phone (not signed in)"
-    from app.services import openclaw_lock
+    from app.services import agent_config, openclaw_lock
 
-    if openclaw_lock.is_primed(phone):
-        return "ok", "primed for current biz"
-    return "warn", "not primed yet"
+    cfg = agent_config.get(phone)
+    if not cfg or not cfg.enabled_agents:
+        return "warn", "no agents enabled"
+
+    primed = openclaw_lock.primed_agents(phone)
+    enabled = cfg.enabled_agents
+    primed_set = set(primed) & set(enabled)
+    total = len(enabled)
+    ok_count = len(primed_set)
+    if ok_count == total:
+        return "ok", f"all {total} agents primed"
+    if ok_count == 0:
+        return "warn", f"0 of {total} primed yet"
+    return "warn", f"{ok_count} of {total} primed"
 
 
 # ─── aggregator ──────────────────────────────────────────────────────────

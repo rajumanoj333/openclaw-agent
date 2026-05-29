@@ -3,14 +3,16 @@ OpenClaw client.
 
 Two entry points:
 
-  • ask_openclaw_raw(message, to=...) — ships the message verbatim, no wrapping.
-    Used by the priming flow and by post-prime chat turns.
+  • ask_openclaw_raw(message, to=...) — ships the message verbatim, no
+    wrapping. Used by the priming flow and post-prime chat turns. The
+    `to` value is the OpenClaw --to key (uniquely identifies a session).
 
-  • ask_openclaw(message, to=...) — smart sender. If the session is already
-    primed (per `openclaw_lock`), ships bare message. Otherwise wraps with
-    the legacy persona prefix so the agent still has context (graceful
-    fallback when priming hasn't completed — e.g. VM was offline at
-    onboarding time and never primed).
+  • ask_openclaw(message, phone=..., agent_slug=...) — smart sender.
+    Routes to the per-agent OpenClaw session (--to = phone:agent_slug).
+    If that session is primed, ships the message bare. Otherwise wraps
+    with the agent-specific system prompt so context isn't lost while
+    priming is pending (graceful fallback when VM was offline at
+    onboarding time).
 """
 from __future__ import annotations
 
@@ -18,25 +20,6 @@ import httpx
 from loguru import logger
 
 from app.config import settings
-
-
-def _wrap_with_persona(message: str, phone: str | None) -> str:
-    """
-    Wrap a user message with the FULL system prompt (business profile +
-    agent persona + scope + brand kit). Used for un-primed sessions so the
-    agent always has complete context, even if priming hasn't run.
-    """
-    if not phone:
-        return message
-    try:
-        from app.services.openclaw_lock import build_system_prompt
-    except Exception:
-        return message
-
-    system = build_system_prompt(phone)
-    if not system:
-        return message
-    return f"{system}\n\n--- USER MESSAGE ---\n{message}"
 
 
 async def ask_openclaw_raw(
@@ -56,24 +39,47 @@ async def ask_openclaw_raw(
     reply = (data.get("reply") or "").strip()
     logger.info(
         f"openclaw reply ms={data.get('ms')} session={data.get('session_id')} "
-        f"chars_in={len(message)} chars_out={len(reply)}"
+        f"to={to} chars_in={len(message)} chars_out={len(reply)}"
     )
     return reply or "(no reply)"
 
 
 async def ask_openclaw(
-    message: str, *, to: str | None = None, timeout: int = 240
+    message: str,
+    *,
+    phone: str | None = None,
+    agent_slug: str = "morpheus",
+    timeout: int = 240,
 ) -> str:
     """
-    Send `message` to OpenClaw. If the session for `to` is primed, ship the
-    message bare; otherwise prepend the legacy persona prefix so context
-    isn't lost while priming is pending.
+    Smart sender keyed by (phone, agent_slug).
+
+    - Determines OpenClaw session key: <phone>:<agent_slug>
+    - If primed: ships bare message.
+    - If not primed: wraps with that agent's full system prompt so the
+      agent has business context immediately, even before priming runs.
     """
-    if to:
-        from app.services import openclaw_lock
+    from app.services import openclaw_lock
+    from app.services.agents.registry import AGENT_REGISTRY
 
-        if openclaw_lock.is_primed(to):
-            return await ask_openclaw_raw(message, to=to, timeout=timeout)
+    # Validate slug; fall back to default if unknown
+    if agent_slug not in AGENT_REGISTRY:
+        logger.warning(f"unknown agent_slug={agent_slug}, falling back to morpheus")
+        agent_slug = "morpheus"
 
-    wrapped = _wrap_with_persona(message, phone=to)
-    return await ask_openclaw_raw(wrapped, to=to, timeout=timeout)
+    if not phone:
+        # No phone → no session, no priming, just verbatim
+        return await ask_openclaw_raw(message, to=None, timeout=timeout)
+
+    session_key = openclaw_lock._session_key(phone, agent_slug)
+
+    if openclaw_lock.is_primed(phone, agent_slug):
+        return await ask_openclaw_raw(message, to=session_key, timeout=timeout)
+
+    # Not primed — wrap with full system prompt for this (phone, agent)
+    system = openclaw_lock.build_system_prompt(phone, agent_slug)
+    if system:
+        wrapped = f"{system}\n\n--- USER MESSAGE ---\n{message}"
+        return await ask_openclaw_raw(wrapped, to=session_key, timeout=timeout)
+
+    return await ask_openclaw_raw(message, to=session_key, timeout=timeout)

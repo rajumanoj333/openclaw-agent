@@ -1,10 +1,9 @@
 """
-Per-user agent persona store.
+Per-owner agent configuration store.
 
-After business onboarding confirms, the user defines their agent: a name,
-the list of capabilities the agent is allowed to handle, and an optional
-extra system instruction. This is enforced by prepending a system block
-to every user message sent to OpenClaw.
+Each owner picks a SUBSET of agents from the registry (Morpheus, Ritu,
+Kiran, Anika, …) for their business. Each enabled agent gets its own
+primed OpenClaw session keyed by (phone, agent_slug).
 
 Phase 3 will move this to Postgres. Same API shape.
 """
@@ -14,9 +13,15 @@ import time
 from dataclasses import asdict, dataclass, field
 from threading import Lock
 
+from app.services.agents.registry import (
+    AGENT_REGISTRY,
+    DEFAULT_AGENT_SLUGS,
+    list_agents,
+)
 
-# Curated capability list. Showing in UI as checkboxes; agent only handles
-# tasks within these scopes.
+
+# Legacy capability list. Kept for backward compatibility with existing
+# clients that still post capabilities — these now map onto agent slugs.
 DEFAULT_CAPABILITIES = [
     "social_media_posts",
     "marketing_campaigns",
@@ -28,18 +33,44 @@ DEFAULT_CAPABILITIES = [
     "analytics_summary",
 ]
 
+# Capability → agent-slug routing. Used when an old client posts the
+# capabilities list and we need to translate to enabled_agents.
+_CAPABILITY_TO_AGENT: dict[str, str] = {
+    "social_media_posts":     "ritu",
+    "marketing_campaigns":    "morpheus",
+    "poster_design":          "morpheus",
+    "customer_replies":       "ritu",
+    "brand_strategy":         "anika",
+    "competitor_research":    "anika",
+    "content_calendar":       "ritu",
+    "analytics_summary":      "anika",
+}
+
 
 @dataclass
 class AgentConfig:
+    """
+    Per-owner config. The 'name' field is legacy (was the single agent's
+    display name); we keep it for back-compat but routing now uses
+    enabled_agents + intent classifier.
+    """
     phone: str
     name: str = "Morpheus"
     capabilities: list[str] = field(default_factory=list)
-    persona_extra: str = ""        # optional free-form instructions
+    enabled_agents: list[str] = field(default_factory=list)
+    persona_extra: str = ""
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        # Hydrate agent display cards for UI consumption
+        d["agents"] = [
+            AGENT_REGISTRY[s].display_card()
+            for s in self.enabled_agents
+            if s in AGENT_REGISTRY
+        ]
+        return d
 
 
 _store: dict[str, AgentConfig] = {}
@@ -47,8 +78,17 @@ _lock = Lock()
 
 
 def put(cfg: AgentConfig) -> None:
+    """
+    Save config. Normalizes enabled_agents:
+      - drops unknown slugs
+      - derives from capabilities if enabled_agents is empty (back-compat)
+      - defaults to DEFAULT_AGENT_SLUGS if both lists are empty
+    """
     with _lock:
         cfg.updated_at = time.time()
+        cfg.enabled_agents = _normalize_agents(
+            cfg.enabled_agents, cfg.capabilities
+        )
         _store[cfg.phone] = cfg
 
 
@@ -58,31 +98,33 @@ def get(phone: str) -> AgentConfig | None:
 
 
 def delete(phone: str) -> bool:
-    """Remove the agent config for a phone. Returns True if something was removed."""
     with _lock:
         return _store.pop(phone, None) is not None
 
 
-def build_persona_prefix(phone: str, business_name: str | None = None) -> str:
-    """
-    Build the system-prompt prefix injected before every user message.
-    Returns "" when no config exists yet.
-    """
-    cfg = get(phone)
-    if not cfg:
-        return ""
+def all_phones() -> list[str]:
+    with _lock:
+        return list(_store.keys())
 
-    caps_human = ", ".join(c.replace("_", " ") for c in cfg.capabilities) or "general assistance"
-    biz = business_name or "the user's business"
 
-    parts = [
-        f"You are {cfg.name}, a marketing-focused AI employee for {biz}.",
-        f"Your scope is strictly: {caps_human}.",
-        "If the user asks for something outside your scope, politely decline and "
-        "suggest the closest in-scope alternative.",
-        "Always respect the brand colors, tone, and visual style on file.",
-    ]
-    if cfg.persona_extra.strip():
-        parts.append(cfg.persona_extra.strip())
+def list_available_agents() -> list[dict]:
+    """All agent display cards for the picker UI."""
+    return [a.display_card() for a in list_agents()]
 
-    return "\n".join(parts)
+
+def _normalize_agents(slugs: list[str], capabilities: list[str]) -> list[str]:
+    """Drop unknown, infer from caps if empty, fall back to defaults."""
+    known = {s for s in (slugs or []) if s in AGENT_REGISTRY}
+    if known:
+        # Preserve original ordering, dedup
+        return [s for s in slugs if s in known and slugs.count(s)]
+    # Infer from capabilities (legacy clients)
+    if capabilities:
+        inferred = {
+            _CAPABILITY_TO_AGENT[c]
+            for c in capabilities
+            if c in _CAPABILITY_TO_AGENT
+        }
+        if inferred:
+            return [s for s in AGENT_REGISTRY.keys() if s in inferred]
+    return list(DEFAULT_AGENT_SLUGS)

@@ -60,14 +60,21 @@ class ConfirmReq(BaseModel):
 
 
 class AgentReq(BaseModel):
-    name: str = Field(..., min_length=1, max_length=40)
+    name: str = Field(default="Morpheus", max_length=40)
     capabilities: list[str] = Field(default_factory=list)
+    enabled_agents: list[str] = Field(default_factory=list)
     persona_extra: str = ""
 
 
 @router.get("/capabilities")
 async def list_capabilities() -> dict[str, Any]:
     return {"capabilities": DEFAULT_CAPABILITIES}
+
+
+@router.get("/agents")
+async def list_available_agents_route() -> dict[str, Any]:
+    """All agents owners can enable. UI picker reads this."""
+    return {"agents": agent_config.list_available_agents()}
 
 
 @router.get("/status")
@@ -152,27 +159,39 @@ async def save_agent(req: AgentReq, phone: str = Depends(_phone_from_auth)) -> d
         raise HTTPException(400, "confirm business profile first")
 
     valid_caps = [c for c in req.capabilities if c in DEFAULT_CAPABILITIES]
-    if not valid_caps:
-        raise HTTPException(400, "pick at least one capability")
+
+    # Owner must pick at least one agent (or at least one legacy capability).
+    if not req.enabled_agents and not valid_caps:
+        raise HTTPException(400, "pick at least one agent or capability")
 
     cfg = AgentConfig(
         phone=phone,
-        name=req.name.strip(),
+        name=req.name.strip() or "Morpheus",
         capabilities=valid_caps,
+        enabled_agents=req.enabled_agents,
         persona_extra=req.persona_extra.strip(),
     )
+    # put() normalizes enabled_agents (drops unknown, infers from caps if empty)
     agent_config.put(cfg)
-    # Re-prime needed: scope/persona changed.
+    saved = agent_config.get(phone)
+
+    # Re-prime every enabled agent: scope/persona changed.
     openclaw_lock.clear_prime(phone)
     logger.info(
-        f"onboarding agent saved phone={phone} name={cfg.name!r} caps={cfg.capabilities}"
+        f"onboarding agent saved phone={phone} name={cfg.name!r} "
+        f"enabled_agents={saved.enabled_agents if saved else []}"
     )
     ws_hub.fire(phone, channel="system", direction="out", kind="status",
                 status="agent_ready")
-    # Fire-and-forget prime so save returns instantly. If VM is down or
-    # OpenClaw is slow, the chat path falls back to legacy persona prefix.
-    asyncio.create_task(openclaw_lock.prime(phone))
-    return {"ok": True, "agent": cfg.to_dict(), "next_step": "ready"}
+    # Fire-and-forget prime for every enabled agent. Each runs sequentially
+    # inside prime_all_enabled to avoid hammering the OpenClaw VM proxy
+    # session lock.
+    asyncio.create_task(openclaw_lock.prime_all_enabled(phone))
+    return {
+        "ok": True,
+        "agent": (saved.to_dict() if saved else cfg.to_dict()),
+        "next_step": "ready",
+    }
 
 
 @router.get("/profile")
@@ -202,9 +221,13 @@ async def reset(phone: str = Depends(_phone_from_auth)) -> dict[str, Any]:
 @router.post("/reprime")
 async def reprime(phone: str = Depends(_phone_from_auth)) -> dict[str, Any]:
     """
-    Manually retry priming — useful if the OpenClaw VM was down at agent-save
-    time and the fire-and-forget prime call failed.
+    Manually retry priming every enabled agent — useful if the OpenClaw
+    VM was down at agent-save time and the fire-and-forget prime call
+    failed for any agent.
     """
     openclaw_lock.clear_prime(phone)
-    ok = await openclaw_lock.prime(phone)
-    return {"ok": ok}
+    results = await openclaw_lock.prime_all_enabled(phone)
+    return {
+        "ok": all(results.values()) if results else False,
+        "results": results,
+    }

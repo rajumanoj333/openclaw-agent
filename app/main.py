@@ -1,18 +1,42 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.routes import audio, auth, instagram, onboarding, system, voice, whatsapp, ws
 from app.services import voice_prompts
 
-app = FastAPI(title="OpenClaw Twilio Agent", version="0.1.0")
 
-# Frontend (Next.js on Vercel) calls this API + opens a WebSocket.
-# In dev allow everything; tighten to the real Vercel domain in production.
+# ─── Rate limiter ────────────────────────────────────────────────────────
+#
+# Limits keyed by client IP (X-Forwarded-For when behind Caddy/ngrok).
+# Defaults are conservative for hackathon demo. Production: tighten + use
+# Redis-backed storage so limits survive process restarts.
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["120/minute"],
+    headers_enabled=True,  # X-RateLimit-* headers in responses
+)
+
+
+app = FastAPI(title="OpenClaw Twilio Agent", version="0.2.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+
+# CORS — open in dev, tighten in prod
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"] if settings.app_env == "dev" else [
+        # production allow-list — fill in the real Vercel / Caddy domain
+        "https://agent-demo.74-225-254-197.sslip.io",
+    ],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

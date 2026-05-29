@@ -37,3 +37,6 @@ redis==5.2.1
 # Utils
 loguru==0.7.3
 PyJWT==2.10.1
+
+# Rate limiting (production)
+slowapi==0.1.9

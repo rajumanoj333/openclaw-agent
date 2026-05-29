@@ -133,10 +133,20 @@ async def _process_text(from_: str, text: str, *, with_audio: bool = False,
         await _process_poster(from_, e164, text)
         return
 
-    # Default: forward to OpenClaw agent.
-    # Embedded runner can take ~90-180s for persona-wrapped prompts.
+    # Default: route to the right agent (intent classifier) + forward.
+    # Embedded OpenClaw runner can take ~90-180s on non-primed sessions.
+    from app.services import agent_config
+    from app.services.agents.registry import route_message
+
+    cfg = agent_config.get(e164)
+    enabled = cfg.enabled_agents if cfg else []
+    agent_slug = route_message(text, enabled)
+    logger.info(f"routed message → agent={agent_slug}")
+
     try:
-        reply = await ask_openclaw(text, to=e164, timeout=240)
+        reply = await ask_openclaw(
+            text, phone=e164, agent_slug=agent_slug, timeout=240
+        )
     except Exception as e:
         logger.exception("openclaw call failed")
         reply = f"Agent error: {e}"
