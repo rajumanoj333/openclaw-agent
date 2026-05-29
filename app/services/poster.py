@@ -48,16 +48,28 @@ def _hero_subject_for(brief: str, profile: BusinessProfile | None) -> str:
 
 def _build_prompt(brief: str, profile: BusinessProfile | None) -> str:
     """
-    KFC-style structured prompt. Sections in order: scene → subject →
-    composition → typography → tagline → palette. Image model renders each
-    section as a separate visual ingredient.
+    Four-part prompt formula (Gemini / Fal best practice):
+
+        [Subject]  +  [Style/Aesthetic]  +  [Lighting & Color]  +  [Text/Typography]
+
+    Each part is one sentence. Image models render each section as a
+    distinct visual ingredient — clean separation produces more
+    consistent, on-brief output than dense compound sentences.
+
+    Business profile fields plugged in:
+      - hero subject derived from business type + brief
+      - style/aesthetic from profile.brand.visual_style + tone
+      - color palette = primary + secondary + accent (real hex codes)
+      - typography = business name as headline + tagline + sub-headline
+      - logo description (so the model leaves space + style for the
+        composited brand badge that's added post-generation)
     """
     name = (profile.name if profile else None) or "the business"
     tone = (profile.brand.tone if profile else None) or "modern"
-    style = (profile.brand.visual_style if profile else None) or "premium editorial"
-    tagline = (profile.brand.tagline if profile else None) or ""
-    services = ", ".join(profile.services[:3]) if profile and profile.services else ""
+    style = (profile.brand.visual_style if profile else None) or "minimalist editorial"
+    tagline = (profile.brand.tagline if profile else None) or _default_tagline(brief)
 
+    # Real brand colors first; fall back to raw palette if brand kit empty.
     colors: list[str] = []
     if profile:
         colors = [
@@ -67,46 +79,65 @@ def _build_prompt(brief: str, profile: BusinessProfile | None) -> str:
                 profile.brand.accent_color,
             ) if c
         ] or profile.raw_colors[:3]
-
-    primary = colors[0] if colors else "#cc0066"
-    secondary = colors[1] if len(colors) > 1 else "#ffce00"
+    primary = colors[0] if colors else "#1c1c1c"
+    secondary = colors[1] if len(colors) > 1 else "#f5e6d3"
+    accent = colors[2] if len(colors) > 2 else "#cc6633"
+    palette_str = ", ".join(c for c in (primary, secondary, accent) if c)
 
     hero = _hero_subject_for(brief, profile)
+    sub_headline = brief.strip()[:80]
 
-    sections = [
-        # 1. Scene
-        f"A high-end studio advertisement poster for {name}, "
-        f"shot in {style} style with {tone} mood. "
-        f"Background: smooth gradient from {primary} to {secondary} with soft "
-        f"diffused lighting and subtle reflections.",
+    # ─── Part 1 · Subject ───────────────────────────────────────
+    # Lead with WHAT is in the poster. Be photographic.
+    part_subject = (
+        f"Create a marketing poster for {name} featuring {hero}, "
+        f"composed as the visual centerpiece on a vertical 9:16 canvas "
+        f"with generous negative space at the top and bottom for typography."
+    )
 
-        # 2. Hero subject
-        f"Centered hero subject: {hero}. "
-        f"{f'Subtle accents referencing: {services}.' if services else ''}",
+    # ─── Part 2 · Style / Aesthetic ─────────────────────────────
+    # The "look" — design language, era, finish.
+    part_style = (
+        f"Aesthetic: {style} design language with a {tone} feeling — "
+        f"premium commercial finish, magazine-cover polish, clean vector "
+        f"shapes where appropriate, no clutter, no stock-photo cliches."
+    )
 
-        # 3. Composition
-        "Composition: ultra-sharp, cinematic lighting, premium commercial "
-        "photography style, shallow depth of field, hyper-realistic textures, "
-        "8K detail, vertical 9:16 layout, ample negative space at top and bottom.",
+    # ─── Part 3 · Lighting & Color ──────────────────────────────
+    # Strict palette is critical for brand consistency.
+    part_lighting = (
+        f"Lighting: soft directional studio light, subtle highlights, "
+        f"shallow depth of field. Color palette is STRICTLY LIMITED to: "
+        f"{palette_str}. Background: smooth gradient from {primary} to "
+        f"{secondary}, with {accent} as a single accent. No other colors. "
+        f"No gradients outside this palette."
+    )
 
-        # 4. Typography (large brand name)
-        f"Large bold typography in the upper area: \"{name.upper()}\" — clean "
-        f"display sans-serif, tight kerning, in {primary} or pure white for "
-        f"maximum contrast against the gradient.",
+    # ─── Part 4 · Text / Typography ─────────────────────────────
+    # Tell the model exactly what text + position. Models otherwise
+    # produce garbled placeholder text.
+    part_text = (
+        f"Typography: at the upper third of the poster, render the brand "
+        f"name '{name.upper()}' in a clean bold display sans-serif, tight "
+        f"kerning, in pure white or {accent} (whichever contrasts more). "
+        f"Below the brand name, a single-line sub-headline reads "
+        f"'{sub_headline}' in a smaller editorial serif. "
+        f"At the very bottom in small caps reads '{tagline}'. "
+        f"All text must be real, correctly-spelled English (or the source "
+        f"language). No lorem ipsum, no garbled letters, no extra words, "
+        f"no extra logos, no watermarks."
+    )
 
-        # 5. Headline / brief
-        f"Sub-headline beneath the brand name: \"{brief.strip()[:80]}\" — "
-        f"smaller editorial serif, single line, all letters readable.",
+    # ─── Logo reservation ──────────────────────────────────────
+    # The logo is composited post-generation as a white pill at the
+    # bottom-center. Tell the model to leave a clear area there.
+    logo_note = (
+        "Leave a clear, uncluttered horizontal strip at the bottom 12% "
+        "of the poster for a separately composited logo badge — no graphics, "
+        "no text, no faces in that strip."
+    )
 
-        # 6. Tagline
-        f"Tagline at the bottom in small caps: \"{tagline or _default_tagline(brief)}\".",
-
-        # 7. Constraints
-        "No lorem ipsum, no sample placeholder text, no garbled letters, "
-        "no watermarks, no extra logos. Every word must be a real, correctly "
-        "spelled word. Premium magazine-cover finish.",
-    ]
-    return " ".join(s.strip() for s in sections if s.strip())
+    return " ".join([part_subject, part_style, part_lighting, part_text, logo_note])
 
 
 def _default_tagline(brief: str) -> str:
