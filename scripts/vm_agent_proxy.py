@@ -116,6 +116,18 @@ def _extract_reply(stdout: str) -> tuple[str, dict | None]:
         except json.JSONDecodeError:
             return stdout.strip()[:2000], None
 
+    # Newer OpenClaw CLI nests the body under `result`:
+    #   {runId, status, summary, result: {payloads:[...], meta:{...}}}
+    # Older shape:
+    #   {payloads:[...], meta:{...}}
+    # Try both — prefer the legacy shape if both are present.
+    result_block = data.get("result")
+    if isinstance(result_block, dict):
+        # Merge nested result into top-level for downstream meta lookup
+        nested_payloads = result_block.get("payloads")
+        if nested_payloads and "payloads" not in data:
+            data = {**data, **result_block}
+
     payloads = data.get("payloads") or []
     if payloads and isinstance(payloads, list) and payloads[0].get("text"):
         return payloads[0]["text"], data
