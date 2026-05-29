@@ -174,7 +174,7 @@ export default function ConfirmProfilePage() {
         title="Brand kit"
         subtitle="Colors + logo the agent will use on every visual it produces"
       >
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
           <ColorField
             label="Primary"
             value={brandValue("primary_color")}
@@ -339,28 +339,57 @@ function ColorField({
   onChange: (v: string) => void;
 }) {
   const isEmpty = !value || !value.trim();
+  // Detect near-white (or weirdly-pale) swatches so we can outline them
+  // strongly — otherwise they disappear against the white card.
+  const isPale = !isEmpty && _isPaleHex(value);
   return (
     <label className="block">
-      <span className="font-mono text-[10px] text-text-mute uppercase tracking-[0.18em] font-medium block mb-1.5">
+      <span className="font-mono text-[10px] text-text-mute uppercase tracking-[0.18em] font-medium block mb-2">
         {label}
       </span>
-      <div className="flex items-center gap-2.5">
-        <span
-          className={`w-11 h-11 rounded-xl border-2 flex-shrink-0 transition ${
+      <div className="bg-bg border border-border rounded-2xl overflow-hidden">
+        <div
+          className={`h-20 flex items-center justify-center ${
             isEmpty
-              ? "border-dashed border-border bg-bg"
-              : "border-border shadow-soft"
+              ? "bg-bg border-b border-dashed border-border-strong/40"
+              : isPale
+                ? "border-b-2 border-border-strong"
+                : "border-b border-border"
           }`}
           style={{ backgroundColor: isEmpty ? undefined : value }}
           aria-label={isEmpty ? "No color set" : value}
-        />
+        >
+          {isEmpty && (
+            <span className="font-mono text-[10px] text-text-mute uppercase tracking-wider">
+              not set
+            </span>
+          )}
+        </div>
         <input
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
           placeholder="#hex"
-          className="flex-1 bg-bg border border-border rounded-xl px-3 py-2.5 text-[13px] text-ink outline-none focus:border-ink/40 transition font-mono placeholder:text-text-mute"
+          className="w-full bg-transparent border-0 px-3 py-2.5 text-[13px] text-ink outline-none focus:bg-ink/[0.02] transition font-mono placeholder:text-text-mute"
         />
       </div>
     </label>
   );
+}
+
+function _isPaleHex(hex: string): boolean {
+  // Treat anything with avg channel > 230 as "pale" so we add visible
+  // outline — otherwise a near-white swatch on a white card vanishes.
+  if (!hex.startsWith("#") || (hex.length !== 4 && hex.length !== 7)) {
+    return false;
+  }
+  let h = hex.slice(1);
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  try {
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return (r + g + b) / 3 > 230;
+  } catch {
+    return false;
+  }
 }
