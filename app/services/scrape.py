@@ -35,7 +35,33 @@ _HEADERS = {
 _HEX_RE = re.compile(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b")
 _RGB_RE = re.compile(r"rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})")
 # Skip these — they're either too common or are our own brand.
-_BORING_COLORS = {"#fff", "#ffffff", "#000", "#000000", "#fafafa", "#f5f5f5", "#eee", "#eeeeee"}
+_BORING_COLORS = {
+    "#fff", "#ffffff", "#000", "#000000",
+    "#fafafa", "#f5f5f5", "#f0f0f0", "#eee", "#eeeeee",
+    "#111", "#111111", "#222", "#222222", "#333", "#333333",
+}
+
+
+def _is_useful_color(hex6: str) -> bool:
+    """
+    Reject near-white, near-black, near-greyscale colors. These are CSS
+    structural values (backgrounds, body text) not brand colors. A real
+    brand color has chromatic spread + sits in the perceptually visible
+    lightness range.
+    """
+    if hex6 in _BORING_COLORS:
+        return False
+    try:
+        r = int(hex6[1:3], 16)
+        g = int(hex6[3:5], 16)
+        b = int(hex6[5:7], 16)
+    except (ValueError, IndexError):
+        return False
+    avg = (r + g + b) / 3
+    if avg > 235 or avg < 22:
+        return False
+    spread = max(r, g, b) - min(r, g, b)
+    return spread >= 14
 
 _FETCH_TIMEOUT = httpx.Timeout(15.0, connect=8.0)
 _MAX_BYTES = 1_500_000  # cap response size — some sites return MB of HTML
@@ -163,30 +189,67 @@ async def fetch_with_aux(url: str) -> list[ScrapedPage]:
 
 
 def _extract_colors(html: str) -> list[str]:
-    """Pull distinct hex / rgb() colors out of raw HTML/CSS, drop boring ones."""
+    """
+    Pull distinct hex / rgb() colors out of raw HTML/CSS.
+
+    Priority order:
+      1. <meta name="theme-color"> — the canonical brand color, set by the
+         site owner for mobile address bar / PWA tinting.
+      2. <link rel="mask-icon" color="...">
+      3. CSS hex literals
+      4. CSS rgb()/rgba() values
+    Filtered by _is_useful_color() — near-white, near-black, and
+    near-greyscale values are dropped as they're structural CSS not brand.
+    """
+    soup = BeautifulSoup(html, "lxml")
     found: list[str] = []
     seen: set[str] = set()
 
+    def _accept(hex_value: str) -> None:
+        if hex_value in seen:
+            return
+        if not _is_useful_color(hex_value):
+            return
+        seen.add(hex_value)
+        found.append(hex_value)
+
+    # 1. theme-color (best brand signal)
+    for meta_name in ("theme-color", "msapplication-TileColor"):
+        tag = soup.find("meta", attrs={"name": meta_name})
+        if tag and tag.get("content"):
+            v = tag["content"].strip().lower()
+            if v.startswith("#") and (len(v) == 4 or len(v) == 7):
+                if len(v) == 4:
+                    v = "#" + "".join(ch * 2 for ch in v[1:])
+                _accept(v)
+
+    # 2. mask-icon color
+    for link in soup.find_all("link", attrs={"rel": True}):
+        rels = link.get("rel") or []
+        if isinstance(rels, str):
+            rels = [rels]
+        if "mask-icon" in [str(r).lower() for r in rels]:
+            v = (link.get("color") or "").strip().lower()
+            if v.startswith("#") and len(v) in (4, 7):
+                if len(v) == 4:
+                    v = "#" + "".join(ch * 2 for ch in v[1:])
+                _accept(v)
+
+    # 3. CSS hex literals — scan the whole HTML (catches inline styles + CSS)
     for m in _HEX_RE.finditer(html):
         c = "#" + m.group(1).lower()
         if len(c) == 4:
-            # expand #abc -> #aabbcc
             c = "#" + "".join(ch * 2 for ch in c[1:])
-        if c in _BORING_COLORS or c in seen:
-            continue
-        seen.add(c)
-        found.append(c)
-        if len(found) >= 25:
+        _accept(c)
+        if len(found) >= 12:
             break
 
+    # 4. rgb()/rgba() values
     for m in _RGB_RE.finditer(html):
         r, g, b = (int(x) for x in m.groups())
         c = f"#{r:02x}{g:02x}{b:02x}"
-        if c in _BORING_COLORS or c in seen:
-            continue
-        seen.add(c)
-        found.append(c)
-        if len(found) >= 25:
+        _accept(c)
+        if len(found) >= 12:
             break
 
     return found
