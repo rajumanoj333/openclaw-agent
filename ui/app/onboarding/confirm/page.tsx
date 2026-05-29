@@ -96,10 +96,10 @@ export default function ConfirmProfilePage() {
   }
 
   return (
-    <div className="card p-8 fade-in">
+    <div className="card p-5 sm:p-8 fade-in">
       <StepIndicator active={1} />
 
-      <h1 className="font-display italic text-[30px] leading-none tracking-editorial text-ink mb-3">
+      <h1 className="font-display italic text-[24px] sm:text-[30px] leading-none tracking-editorial text-ink mb-3">
         Does this look right?
       </h1>
       <p className="text-sm text-text-dim mb-6 leading-relaxed">
@@ -156,7 +156,7 @@ export default function ConfirmProfilePage() {
         <h3 className="text-xs font-medium text-text-dim uppercase tracking-wider mb-2">
           Brand colors
         </h3>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <ColorField
             label="Primary"
             value={brandValue("primary_color")}
@@ -182,15 +182,28 @@ export default function ConfirmProfilePage() {
           </h3>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={`/api/img?url=${encodeURIComponent(profile.logo_url)}`}
+            src={profile.logo_url}
             alt="Logo"
             className="max-h-24 rounded-xl border border-border bg-white p-2"
             referrerPolicy="no-referrer"
+            onError={(e) => {
+              // Some sites block hot-linking → fall back to local proxy.
+              // If proxy also fails, hide the broken image.
+              const t = e.currentTarget;
+              if (!t.src.includes("/api/img?")) {
+                t.src = `/api/img?url=${encodeURIComponent(profile.logo_url!)}`;
+              } else {
+                t.style.display = "none";
+              }
+            }}
           />
+          <p className="mt-1.5 font-mono text-[10px] text-text-mute break-all">
+            {profile.logo_url}
+          </p>
         </div>
       )}
 
-      <div className="mt-7 pt-5 border-t border-border flex gap-2 justify-end">
+      <div className="mt-7 pt-5 border-t border-border flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
         <button
           onClick={() => router.push("/onboarding/business")}
           className="px-4 py-2 rounded-full border border-border text-text-dim hover:text-text hover:border-border-strong transition text-sm"
@@ -212,9 +225,10 @@ export default function ConfirmProfilePage() {
       </div>
 
       {err && (
-        <p className="mt-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded-xl p-3 break-all">
-          {err}
-        </p>
+        <div className="mt-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded-xl p-3" role="alert">
+          <p className="font-medium mb-1">Could not save profile</p>
+          <p className="font-mono text-[11px] break-all opacity-80">{err}</p>
+        </div>
       )}
     </div>
   );
