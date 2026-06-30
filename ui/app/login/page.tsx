@@ -52,15 +52,15 @@ export default function LoginPage() {
         <p className="rule mb-5 max-w-[140px] mx-auto">
           <span>est. 2026</span>
         </p>
-        <h1 className="font-display italic text-[64px] leading-none tracking-editorial text-ink">
+        <h1 className="font-display italic text-[40px] sm:text-[52px] md:text-[64px] leading-none tracking-editorial text-ink">
           Morpheus
         </h1>
-        <p className="mt-3 text-[14px] text-text-dim font-mono uppercase tracking-[0.2em]">
+        <p className="mt-3 text-[13px] sm:text-[14px] text-text-dim font-mono uppercase tracking-[0.2em]">
           your marketing employee
         </p>
       </div>
 
-      <div className="card w-full max-w-md p-8 fade-in">
+      <div className="card w-full max-w-md p-6 sm:p-8 fade-in">
         <div className="flex justify-center mb-6 relative">
           <div className="w-24 h-24 blob" />
           <span
@@ -156,9 +156,10 @@ export default function LoginPage() {
         </button>
 
         {err && (
-          <p className="mt-3 text-[12px] text-danger bg-danger/10 border border-danger/20 rounded-xl p-3 break-all font-mono">
-            {err}
-          </p>
+          <div className="mt-3 text-[12px] text-danger bg-danger/10 border border-danger/20 rounded-xl p-3" role="alert">
+            <p className="font-medium mb-1">Something went wrong</p>
+            <p className="font-mono text-[11px] break-all opacity-80">{err}</p>
+          </div>
         )}
       </div>
 

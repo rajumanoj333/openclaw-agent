@@ -100,11 +100,11 @@ export default function AgentDefinitionPage() {
         </p>
       </div>
 
-      {/* ─── Studio name ──────────────────────────────────────── */}
+      {/* ─── Team name ──────────────────────────────────────── */}
       <div className="mb-7">
         <label className="block">
           <span className="font-mono text-[10px] text-text-mute uppercase tracking-[0.18em] block mb-1.5">
-            Studio name
+            Team name
           </span>
           <input
             value={name}

@@ -28,14 +28,14 @@ export default function BusinessUrlPage() {
   };
 
   return (
-    <div className="card p-8 fade-in">
+    <div className="card p-5 sm:p-8 fade-in">
       <StepIndicator active={0} />
 
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-11 h-11 rounded-2xl bg-bg border border-border flex items-center justify-center">
+      <div className="flex items-start sm:items-center gap-3 mb-3">
+        <div className="w-11 h-11 rounded-2xl bg-bg border border-border flex items-center justify-center flex-shrink-0">
           <Globe size={18} className="text-text-dim" />
         </div>
-        <h1 className="font-display italic text-[30px] leading-none tracking-editorial text-ink">
+        <h1 className="font-display italic text-[24px] sm:text-[30px] leading-none tracking-editorial text-ink">
           Tell me about your business
         </h1>
       </div>
@@ -87,9 +87,10 @@ export default function BusinessUrlPage() {
       )}
 
       {err && (
-        <p className="mt-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded-xl p-3 break-all">
-          {err}
-        </p>
+        <div className="mt-3 text-xs text-danger bg-danger/10 border border-danger/20 rounded-xl p-3" role="alert">
+          <p className="font-medium mb-1">Could not read that site</p>
+          <p className="font-mono text-[11px] break-all opacity-80">{err}</p>
+        </div>
       )}
 
       <div className="mt-7 pt-5 border-t border-border">

@@ -41,7 +41,7 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${fraunces.variable} ${dmSans.variable} ${jetbrains.variable}`}
     >
-      <body className="min-h-screen font-body" suppressHydrationWarning>
+      <body className="min-h-screen font-body">
         {children}
       </body>
     </html>
